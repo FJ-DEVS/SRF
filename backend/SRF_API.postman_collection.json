@@ -1,0 +1,1051 @@
+{
+  "info": {
+    "name": "SRF Backend API",
+    "description": "Complete API collection for SRF Backend with test data",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{admin_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "salesman_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "salesman_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customer_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vendor_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "item_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "cargo_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin Authentication",
+      "item": [
+        {
+          "name": "Admin Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('admin_token', jsonData.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "login"]
+            },
+            "description": "Login as admin and get JWT token"
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Token",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/verify",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "verify"]
+            },
+            "description": "Verify if the admin token is valid"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Salesman",
+      "item": [
+        {
+          "name": "Salesman Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('salesman_token', jsonData.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"john_doe\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/salesman/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman", "login"]
+            },
+            "description": "Login as salesman and get JWT token"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Salesman",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('salesman_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"username\": \"john_doe\",\n  \"password\": \"password123\",\n  \"phone\": \"+1234567890\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/salesman",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman"]
+            },
+            "description": "Create a new salesman (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Salesmen",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/salesman",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman"]
+            },
+            "description": "Get list of all salesmen (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Salesman",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/salesman/{{salesman_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman", "{{salesman_id}}"]
+            },
+            "description": "Get details of a specific salesman (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Salesman",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Updated\",\n  \"phone\": \"+9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/salesman/{{salesman_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman", "{{salesman_id}}"]
+            },
+            "description": "Update salesman details (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Salesman",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/salesman/{{salesman_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "salesman", "{{salesman_id}}"]
+            },
+            "description": "Delete a salesman (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customer",
+      "item": [
+        {
+          "name": "Create Customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('customer_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+1234567890\",\n  \"name\": \"ABC Corporation\",\n  \"gstin\": \"22AAAAA0000A1Z5\",\n  \"isBlocked\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/customers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customers"]
+            },
+            "description": "Create a new customer (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Customers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customers"]
+            },
+            "description": "Get list of all customers (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Customer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customers/{{customer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customers", "{{customer_id}}"]
+            },
+            "description": "Get details of a specific customer (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Customer",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ABC Corporation Updated\",\n  \"phone\": \"+1111111111\",\n  \"gstin\": \"22AAAAA0000A1Z9\",\n  \"isBlocked\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/customers/{{customer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customers", "{{customer_id}}"]
+            },
+            "description": "Update customer details (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Customer",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/customers/{{customer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "customers", "{{customer_id}}"]
+            },
+            "description": "Delete a customer (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Vendor",
+      "item": [
+        {
+          "name": "Create Vendor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('vendor_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+1234567890\",\n  \"name\": \"Steel Supplier Ltd\",\n  \"gstin\": \"27AAAAA0000A1Z5\",\n  \"isBlocked\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/vendors",
+              "host": ["{{base_url}}"],
+              "path": ["api", "vendors"]
+            },
+            "description": "Create a new vendor (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Vendors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/vendors",
+              "host": ["{{base_url}}"],
+              "path": ["api", "vendors"]
+            },
+            "description": "Get list of all vendors (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Vendor",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/vendors/{{vendor_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "vendors", "{{vendor_id}}"]
+            },
+            "description": "Get details of a specific vendor (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Vendor",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Steel Supplier Updated\",\n  \"phone\": \"+1111111111\",\n  \"gstin\": \"27AAAAA0000A1Z9\",\n  \"isBlocked\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/vendors/{{vendor_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "vendors", "{{vendor_id}}"]
+            },
+            "description": "Update vendor details (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Vendor",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/vendors/{{vendor_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "vendors", "{{vendor_id}}"]
+            },
+            "description": "Delete a vendor (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Item",
+      "item": [
+        {
+          "name": "Create Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('item_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Steel Rod 12mm\",\n  \"rakNo\": \"A1-B2\",\n  \"price\": 450.50,\n  \"quantity\": 100\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/items",
+              "host": ["{{base_url}}"],
+              "path": ["api", "items"]
+            },
+            "description": "Create a new item (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Items",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/items",
+              "host": ["{{base_url}}"],
+              "path": ["api", "items"]
+            },
+            "description": "Get list of all items (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Item",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/items/{{item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "items", "{{item_id}}"]
+            },
+            "description": "Get details of a specific item (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Steel Rod 12mm Updated\",\n  \"rakNo\": \"A1-B3\",\n  \"price\": 475.00,\n  \"quantity\": 150\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/items/{{item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "items", "{{item_id}}"]
+            },
+            "description": "Update item details (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/items/{{item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "items", "{{item_id}}"]
+            },
+            "description": "Delete an item (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cargo",
+      "item": [
+        {
+          "name": "Create Cargo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('cargo_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Express Logistics\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/cargo",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cargo"]
+            },
+            "description": "Create a new cargo company (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Cargo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cargo",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cargo"]
+            },
+            "description": "Get list of all cargo companies (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Cargo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cargo/{{cargo_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cargo", "{{cargo_id}}"]
+            },
+            "description": "Get details of a specific cargo company (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Cargo",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Express Logistics Updated\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/cargo/{{cargo_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cargo", "{{cargo_id}}"]
+            },
+            "description": "Update cargo company details (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Cargo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cargo/{{cargo_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cargo", "{{cargo_id}}"]
+            },
+            "description": "Delete a cargo company (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "item": [
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders/stats",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "stats"]
+            },
+            "description": "Get dashboard statistics (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order (Sell)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('order_id', jsonData.data._id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"sell order\",\n  \"items\": [\n    {\n      \"item\": \"{{item_id}}\",\n      \"quantity\": 5\n    }\n  ],\n  \"customerName\": \"{{customer_id}}\",\n  \"cargo\": \"{{cargo_id}}\",\n  \"status\": \"pending\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Create a new sell order by Admin. Each item must include 'item' (ID) and 'quantity' (number). The system will check if sufficient quantity is available and deduct from inventory. The createdBy field is automatically set to 'Admin'. Use admin_token in Authorization header."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order (Purchase)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"purchase order\",\n  \"items\": [\n    {\n      \"item\": \"{{item_id}}\",\n      \"quantity\": 10\n    }\n  ],\n  \"status\": \"pending\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Create a new purchase order (Admin only). Each item must include 'item' (ID) and 'quantity' (number). Purchase orders add quantity to inventory. The createdBy field is automatically set to 'Admin'. Use admin_token in Authorization header."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Order (Sell by Salesman)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{salesman_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"sell order\",\n  \"items\": [\n    {\n      \"item\": \"{{item_id}}\",\n      \"quantity\": 3\n    }\n  ],\n  \"customerName\": \"{{customer_id}}\",\n  \"cargo\": \"{{cargo_id}}\",\n  \"status\": \"pending\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Create a new sell order by Salesman. Each item must include 'item' (ID) and 'quantity' (number). Use salesman_token in Authorization header. The createdBy field will be automatically set to the authenticated salesman's ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Get list of all orders (Admin sees all, Salesman sees own)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single Order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}"]
+            },
+            "description": "Get details of a specific order"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Order Status",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"billed\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}", "status"]
+            },
+            "description": "Update order status (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"item\": \"{{item_id}}\",\n      \"quantity\": 7\n    }\n  ],\n  \"customerName\": \"{{customer_id}}\",\n  \"cargo\": \"{{cargo_id}}\",\n  \"status\": \"rolled\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}"]
+            },
+            "description": "Update complete order details (Admin only). Each item must include 'item' (ID) and 'quantity' (number). Note: Updating quantities does not affect inventory - only order creation does."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}"]
+            },
+            "description": "Delete an order (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+
