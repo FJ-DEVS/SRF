@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 
+// Points are earned per unit sold of any item inside the category
 const pointsAllocationSchema = new mongoose.Schema({
-  item: {
+  category: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Item',
-    required: [true, 'Item is required']
+    ref: 'Category',
+    required: [true, 'Category is required']
   },
-  itemName: {
+  categoryName: {
     type: String,
     trim: true,
     default: ''

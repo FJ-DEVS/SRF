@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import api from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
@@ -11,14 +12,16 @@ import { ITEM_SORT_OPTIONS, DEFAULT_SORT } from '../utils/sortOptions';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, Tag, TrendingUp, Package,
   ArrowDownToLine, ArrowUpFromLine, IndianRupee, Boxes, Check, History,
-  Download, Upload
+  Download, Upload, AlertTriangle, ShieldCheck
 } from 'lucide-react';
 
 const Items = () => {
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [sizeFilter, setSizeFilter] = useState('');
+  const [stockState, setStockState] = useState(searchParams.get('stockState') || '');
   const [sortBy, setSortBy] = useState(DEFAULT_SORT);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -37,12 +40,15 @@ const Items = () => {
     name: '',
     price: '',
     quantity: '',
-    category: ''
+    category: '',
+    checkLevel: ''
   });
 
   const [categories, setCategories] = useState([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryCheckLevel, setNewCategoryCheckLevel] = useState('');
+  const [editingCategoryCheckLevel, setEditingCategoryCheckLevel] = useState('');
   const [categoryToDelete, setCategoryToDelete] = useState(null);
   const [showDeleteCategoryModal, setShowDeleteCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -64,11 +70,11 @@ const Items = () => {
 
   useEffect(() => {
     fetchItems();
-  }, [searchTerm, sizeFilter, sortBy, currentPage, pageSize]);
+  }, [searchTerm, sizeFilter, stockState, sortBy, currentPage, pageSize]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, sizeFilter, sortBy, pageSize]);
+  }, [searchTerm, sizeFilter, stockState, sortBy, pageSize]);
 
   const fetchCategories = async () => {
     try {
@@ -81,14 +87,20 @@ const Items = () => {
     }
   };
 
+  // Everything the list is currently filtered by — shared with the Excel export
+  const listFilters = () => ({
+    search: searchTerm,
+    category: sizeFilter,
+    stockState,
+    sort: sortBy
+  });
+
   const fetchItems = async () => {
     try {
       setLoading(true);
       const response = await api.get('/items', {
         params: {
-          search: searchTerm,
-          category: sizeFilter,
-          sort: sortBy,
+          ...listFilters(),
           page: currentPage,
           limit: pageSize
         }
@@ -119,9 +131,13 @@ const Items = () => {
   const handleAddCategory = async () => {
     if (!newCategoryName.trim()) return;
     try {
-      const response = await api.post('/categories', { name: newCategoryName.trim() });
+      const response = await api.post('/categories', {
+        name: newCategoryName.trim(),
+        checkLevel: newCategoryCheckLevel
+      });
       if (response.data.success) {
         setNewCategoryName('');
+        setNewCategoryCheckLevel('');
         fetchCategories();
       }
     } catch (error) {
@@ -132,18 +148,21 @@ const Items = () => {
   const handleStartEditCategory = (cat) => {
     setEditingCategory(cat);
     setEditingCategoryName(cat.name);
+    setEditingCategoryCheckLevel(cat.checkLevel ?? '');
   };
 
   const handleSaveCategory = async () => {
     if (!editingCategory || !editingCategoryName.trim()) return;
     try {
       const response = await api.put(`/categories/${editingCategory._id}`, {
-        name: editingCategoryName.trim()
+        name: editingCategoryName.trim(),
+        checkLevel: editingCategoryCheckLevel
       });
       if (response.data.success) {
         if (sizeFilter === editingCategory.name) setSizeFilter(editingCategoryName.trim());
         setEditingCategory(null);
         setEditingCategoryName('');
+        setEditingCategoryCheckLevel('');
         fetchCategories();
         fetchItems();
       }
@@ -205,13 +224,15 @@ const Items = () => {
 
   /* ---------- Excel export/import ---------- */
 
+  // Exports exactly what the list is showing — the active category, search,
+  // stock filter and sort all carry over
   const handleExportExcel = async () => {
     setExportLoading(true);
     try {
-      const response = await api.get('/items', { params: { limit: 100000 } });
+      const response = await api.get('/items', { params: { ...listFilters(), limit: 100000 } });
       const allItems = response.data?.data || [];
       if (allItems.length === 0) {
-        showAlert('No Data', 'No items to export', 'info');
+        showAlert('No Data', 'No items match the current filters', 'info');
         return;
       }
 
@@ -221,13 +242,26 @@ const Items = () => {
         'Name': item.name,
         'Category': item.category || '',
         'Price': item.price,
-        'Quantity': item.quantity
+        'Quantity': item.quantity,
+        'Check Level': item.checkLevel ?? '',
+        'Stock Status': item.belowCheckLevel ? 'Below check level' : 'OK'
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(exportData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Items');
-      XLSX.writeFile(workbook, `items_${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+      const slug = (s) => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      const suffix = [
+        sizeFilter && slug(sizeFilter),
+        stockState && `${stockState}-check-level`,
+        searchTerm && `search-${slug(searchTerm)}`
+      ].filter(Boolean).join('_');
+
+      XLSX.writeFile(
+        workbook,
+        `items${suffix ? `_${suffix}` : ''}_${new Date().toISOString().slice(0, 10)}.xlsx`
+      );
     } catch {
       showAlert('Error', 'Failed to export items', 'error');
     } finally {
@@ -255,7 +289,8 @@ const Items = () => {
           name: row['Name'] ?? row['name'],
           category: row['Category'] ?? row['category'] ?? '',
           price: row['Price'] ?? row['price'],
-          quantity: row['Quantity'] ?? row['quantity']
+          quantity: row['Quantity'] ?? row['quantity'],
+          checkLevel: row['Check Level'] ?? row['checkLevel']
         }))
         .filter((r) => r._id || (r.name && String(r.name).trim()));
 
@@ -329,7 +364,8 @@ const Items = () => {
       name: item.name,
       price: item.price,
       quantity: item.quantity,
-      category: item.category || ''
+      category: item.category || '',
+      checkLevel: item.checkLevel ?? ''
     });
     setShowModal(true);
   };
@@ -337,7 +373,7 @@ const Items = () => {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedItem(null);
-    setFormData({ name: '', price: '', quantity: '', category: '' });
+    setFormData({ name: '', price: '', quantity: '', category: '', checkLevel: '' });
   };
 
   const handleViewDetail = async (item) => {
@@ -361,10 +397,37 @@ const Items = () => {
     setDetailStats(null);
   };
 
-  const stockBadge = (qty) => {
+  const stockBadge = (item) => {
+    const qty = item.quantity;
     if (qty === 0) return <span className="srf-badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">Out of stock</span>;
-    if (qty <= 10) return <span className="srf-badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">{qty} left</span>;
+    if (item.belowCheckLevel) {
+      return (
+        <span className="srf-badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">
+          <AlertTriangle className="h-3 w-3" />
+          {qty} · below check level
+        </span>
+      );
+    }
+    if (item.effectiveCheckLevel == null && qty <= 10) {
+      return <span className="srf-badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">{qty} left</span>;
+    }
     return <span className="text-[13px] text-slate-600">{qty}</span>;
+  };
+
+  // Own check level reads plain; one inherited from the category is marked
+  const checkLevelCell = (item) => {
+    if (item.checkLevel != null) {
+      return <span className="text-[13px] tabular-nums text-slate-700">{item.checkLevel}</span>;
+    }
+    if (item.effectiveCheckLevel != null) {
+      return (
+        <span className="text-[13px] tabular-nums text-slate-400" title="Inherited from the category">
+          {item.effectiveCheckLevel}
+          <span className="ml-1 text-[10px] uppercase tracking-wide">cat</span>
+        </span>
+      );
+    }
+    return <span className="text-slate-300">—</span>;
   };
 
   const rowActions = (item) => (
@@ -464,10 +527,31 @@ const Items = () => {
               type="button"
               onClick={() => setSizeFilter(sizeFilter === cat.name ? '' : cat.name)}
               className={`srf-chip ${sizeFilter === cat.name ? 'srf-chip-active' : ''}`}
+              title={cat.checkLevel != null ? `Check level ${cat.checkLevel}` : undefined}
             >
               {cat.name}
             </button>
           ))}
+        </div>
+
+        {/* Check level chips */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setStockState(stockState === 'below' ? '' : 'below')}
+            className={`srf-chip ${stockState === 'below' ? 'srf-chip-active' : 'text-amber-700'}`}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            Below check level
+          </button>
+          <button
+            type="button"
+            onClick={() => setStockState(stockState === 'above' ? '' : 'above')}
+            className={`srf-chip ${stockState === 'above' ? 'srf-chip-active' : 'text-emerald-700'}`}
+          >
+            <ShieldCheck className="h-3 w-3" />
+            Above check level
+          </button>
         </div>
       </div>
 
@@ -496,12 +580,17 @@ const Items = () => {
                     <th>Category</th>
                     <th>Price</th>
                     <th>Stock</th>
+                    <th>Check Level</th>
                     <th className="text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item) => (
-                    <tr key={item._id} className="cursor-pointer" onClick={() => handleViewDetail(item)}>
+                    <tr
+                      key={item._id}
+                      className={`cursor-pointer ${item.belowCheckLevel ? 'bg-amber-50/60' : ''}`}
+                      onClick={() => handleViewDetail(item)}
+                    >
                       <td className="max-w-[300px] truncate font-semibold text-slate-900">{item.name}</td>
                       <td>
                         {item.category
@@ -509,7 +598,8 @@ const Items = () => {
                           : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="font-medium text-slate-800">₹{item.price.toLocaleString('en-IN')}</td>
-                      <td>{stockBadge(item.quantity)}</td>
+                      <td>{stockBadge(item)}</td>
+                      <td>{checkLevelCell(item)}</td>
                       <td>
                         <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           {rowActions(item)}
@@ -524,18 +614,25 @@ const Items = () => {
             {/* Mobile list */}
             <div className="divide-y divide-slate-100 md:hidden">
               {items.map((item) => (
-                <div key={item._id} className="p-3.5" onClick={() => handleViewDetail(item)}>
+                <div
+                  key={item._id}
+                  className={`p-3.5 ${item.belowCheckLevel ? 'bg-amber-50/60' : ''}`}
+                  onClick={() => handleViewDetail(item)}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{item.name}</p>
                     <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                       {rowActions(item)}
                     </div>
                   </div>
-                  <div className="mt-1.5 flex items-center gap-3 text-xs text-slate-500">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
                     <span className="font-semibold text-slate-800">₹{item.price.toLocaleString('en-IN')}</span>
-                    {stockBadge(item.quantity)}
+                    {stockBadge(item)}
                     {item.category && (
                       <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">{item.category}</span>
+                    )}
+                    {item.effectiveCheckLevel != null && (
+                      <span className="text-[11px] text-slate-400">Check level {item.effectiveCheckLevel}</span>
                     )}
                   </div>
                 </div>
@@ -616,6 +713,27 @@ const Items = () => {
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="mb-1.5 block">
+                  Check Level <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formData.checkLevel}
+                  onChange={(e) => setFormData({ ...formData, checkLevel: e.target.value })}
+                  className="w-full"
+                  placeholder={
+                    categories.find((c) => c.name === formData.category)?.checkLevel != null
+                      ? `Category default: ${categories.find((c) => c.name === formData.category).checkLevel}`
+                      : 'e.g. 50'
+                  }
+                />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Stock at or below this is flagged for reordering. Leave blank to use the category's check level.
+                </p>
+              </div>
             </form>
 
             <div className="srf-modal-footer">
@@ -661,11 +779,26 @@ const Items = () => {
                   <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                     <Boxes className="h-3 w-3" /> In Stock
                   </p>
-                  <p className={`mt-1 font-display text-lg font-bold ${detailItem.quantity === 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                  <p className={`mt-1 font-display text-lg font-bold ${
+                    detailItem.quantity === 0 ? 'text-rose-600' : detailItem.belowCheckLevel ? 'text-amber-600' : 'text-slate-900'
+                  }`}>
                     {detailItem.quantity}
                   </p>
+                  {detailItem.effectiveCheckLevel != null && (
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      Check level {detailItem.effectiveCheckLevel}
+                      {detailItem.checkLevel == null && ' (from category)'}
+                    </p>
+                  )}
                 </div>
               </div>
+
+              {detailItem.belowCheckLevel && (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Stock has reached the check level — time to reorder.
+                </div>
+              )}
 
               {/* Purchase / sales stats */}
               {detailStatsLoading ? (
@@ -817,6 +950,15 @@ const Items = () => {
                   onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
                   className="flex-1 min-w-0"
                 />
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Check lvl"
+                  value={newCategoryCheckLevel}
+                  onChange={(e) => setNewCategoryCheckLevel(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                  className="w-24 shrink-0"
+                />
                 <button onClick={handleAddCategory} className="srf-btn srf-btn-primary shrink-0">
                   <Plus className="h-4 w-4" /> Add
                 </button>
@@ -842,6 +984,18 @@ const Items = () => {
                             autoFocus
                             className="min-w-0 flex-1 !px-2 !py-1 !text-[13px]"
                           />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="Check lvl"
+                            value={editingCategoryCheckLevel}
+                            onChange={(e) => setEditingCategoryCheckLevel(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveCategory();
+                              if (e.key === 'Escape') setEditingCategory(null);
+                            }}
+                            className="w-20 shrink-0 !px-2 !py-1 !text-[13px]"
+                          />
                           <button
                             onClick={handleSaveCategory}
                             className="srf-row-action text-emerald-600 hover:bg-emerald-50"
@@ -860,6 +1014,9 @@ const Items = () => {
                       ) : (
                         <>
                           <span className="flex-1 truncate text-[13px] font-medium text-slate-800">{cat.name}</span>
+                          <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
+                            {cat.checkLevel != null ? `Check ${cat.checkLevel}` : 'No check level'}
+                          </span>
                           <button
                             onClick={() => handleStartEditCategory(cat)}
                             className="srf-row-action text-slate-500 hover:bg-slate-100"

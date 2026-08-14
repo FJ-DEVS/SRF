@@ -5,9 +5,11 @@ const Vendor = require('../models/Vendor');
 const Salesman = require('../models/Salesman');
 const Item = require('../models/Item');
 const Cargo = require('../models/Cargo');
+const Category = require('../models/Category');
 const axios = require('axios');
 const { getIO } = require('../socket');
 const { consumePlacedStock } = require('../utils/placementMath');
+const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 
 // Helper function to send OneSignal notification
 const sendPushNotification = async (message, data = {}) => {
@@ -966,6 +968,23 @@ exports.getDashboardStats = async (req, res) => {
     const totalSalesmen = await Salesman.countDocuments();
     const totalCustomers = await Customer.countDocuments();
 
+    // Safety stock: items at or below their (own or inherited) check level,
+    // plus categories whose total stock has fallen to their check level
+    const levelsByCategory = await categoryCheckLevels();
+    const belowQuery = belowCheckLevelQuery(levelsByCategory);
+    const itemsBelowCheck = await Item.find(belowQuery)
+      .select('name category quantity price checkLevel')
+      .sort({ quantity: 1 })
+      .lean();
+
+    const categoryStock = await Item.aggregate([
+      { $group: { _id: { $ifNull: ['$category', ''] }, stockQty: { $sum: { $ifNull: ['$quantity', 0] } } } }
+    ]);
+    const categoriesBelowCheck = categoryStock
+      .filter((c) => levelsByCategory.has(c._id) && c.stockQty <= levelsByCategory.get(c._id))
+      .map((c) => ({ category: c._id, stockQty: c.stockQty, checkLevel: levelsByCategory.get(c._id) }))
+      .sort((a, b) => a.stockQty - b.stockQty);
+
     // Get monthly trend data for last 6 months
     const monthlyTrends = [];
     const currentDate = new Date();
@@ -1006,7 +1025,14 @@ exports.getDashboardStats = async (req, res) => {
         },
         salesmen: totalSalesmen,
         customers: totalCustomers,
-        trends: monthlyTrends
+        trends: monthlyTrends,
+        stockAlerts: {
+          itemsBelow: itemsBelowCheck.length,
+          categoriesBelow: categoriesBelowCheck.length,
+          // Worst-off first, enough for a dashboard panel
+          items: itemsBelowCheck.slice(0, 8).map((it) => decorateCheckLevel(it, levelsByCategory)),
+          categories: categoriesBelowCheck.slice(0, 8)
+        }
       }
     });
 
@@ -1021,15 +1047,23 @@ exports.getDashboardStats = async (req, res) => {
 
 // Consolidation report - Admin only
 // Aggregates orders (optionally filtered by date range, type, status, item,
-// order quantity) into summary totals, status/trend/item/party breakdowns,
-// plus unfiltered entity counts describing the overall project structure.
+// order quantity, booking salesman) into summary totals, status/trend/item/party
+// breakdowns, plus unfiltered entity counts describing the overall project
+// structure and the check-level (safety stock) state of the catalog.
 exports.getConsolidationReport = async (req, res) => {
   try {
-    const { startDate, endDate, type, status, item, minQty, maxQty } = req.query;
+    const { startDate, endDate, type, status, item, minQty, maxQty, salesman } = req.query;
 
     const match = {};
     if (type) match.type = type;
     if (status) match.status = status;
+
+    // Orders booked by one salesman. createdBy is a Mixed field — older rows
+    // hold the id as a string, newer ones as an ObjectId — so match both.
+    if (salesman && mongoose.Types.ObjectId.isValid(salesman)) {
+      match.createdByType = 'salesman';
+      match.createdBy = { $in: [salesman, new mongoose.Types.ObjectId(salesman)] };
+    }
 
     let rangeStart = null;
     let rangeEnd = null;
@@ -1208,7 +1242,7 @@ exports.getConsolidationReport = async (req, res) => {
 
     const [result] = await Order.aggregate(pipeline);
 
-    const [totalOrders, totalItems, totalCustomers, totalVendors, totalSalesmen, totalCargo, categoryCatalog] =
+    const [totalOrders, totalItems, totalCustomers, totalVendors, totalSalesmen, totalCargo, catalogItems, categories] =
       await Promise.all([
         Order.countDocuments(),
         Item.countDocuments(),
@@ -1216,36 +1250,71 @@ exports.getConsolidationReport = async (req, res) => {
         Vendor.countDocuments(),
         Salesman.countDocuments(),
         Cargo.countDocuments(),
-        // Catalog side of the category summary: how many items and how much
-        // stock each category holds, independent of the order filters
-        Item.aggregate([
-          {
-            $group: {
-              _id: { $ifNull: ['$category', ''] },
-              items: { $sum: 1 },
-              stockQty: { $sum: { $ifNull: ['$quantity', 0] } },
-              stockValue: {
-                $sum: { $multiply: [{ $ifNull: ['$quantity', 0] }, { $ifNull: ['$price', 0] }] }
-              }
-            }
-          },
-          {
-            $project: {
-              _id: 0,
-              category: { $cond: [{ $in: ['$_id', ['', null]] }, 'Uncategorised', '$_id'] },
-              items: 1,
-              stockQty: 1,
-              stockValue: 1
-            }
-          },
-          { $sort: { items: -1 } }
-        ])
+        // Catalog side of the summary — the whole item master, independent of
+        // the order filters, so stock and check levels are always in view
+        Item.find().select('name category quantity price checkLevel').lean(),
+        Category.find().select('name checkLevel').lean()
       ]);
+
+    const levelsByCategory = new Map(
+      categories.filter((c) => c.checkLevel !== null && c.checkLevel !== undefined)
+        .map((c) => [c.name, c.checkLevel])
+    );
+
+    // Per-category catalog rows: item count, stock on hand, its own check level
+    // and how many of its items are sitting at or below theirs
+    const catalogByCategory = new Map();
+    const itemMeta = new Map();
+    for (const it of catalogItems) {
+      const name = it.category || 'Uncategorised';
+      if (!catalogByCategory.has(name)) {
+        catalogByCategory.set(name, {
+          category: name,
+          items: 0,
+          stockQty: 0,
+          stockValue: 0,
+          checkLevel: levelsByCategory.has(name) ? levelsByCategory.get(name) : null,
+          itemsBelowCheck: 0
+        });
+      }
+      const row = catalogByCategory.get(name);
+      const qty = it.quantity || 0;
+      row.items += 1;
+      row.stockQty += qty;
+      row.stockValue += qty * (it.price || 0);
+
+      const decorated = decorateCheckLevel(it, levelsByCategory);
+      if (decorated.belowCheckLevel) row.itemsBelowCheck += 1;
+      itemMeta.set(String(it._id), {
+        stockQty: qty,
+        checkLevel: decorated.effectiveCheckLevel,
+        belowCheckLevel: decorated.belowCheckLevel
+      });
+    }
+
+    const categoryCatalog = [...catalogByCategory.values()]
+      .map((row) => ({
+        ...row,
+        // A category is below its line when its total stock has fallen to it
+        belowCheckLevel: row.checkLevel !== null && row.stockQty <= row.checkLevel
+      }))
+      .sort((a, b) => b.items - a.items);
+
+    // Carry the same stock/check-level facts onto the ordered-items table
+    const itemBreakdown = result.itemBreakdown.map((row) => {
+      const meta = itemMeta.get(String(row.itemId)) || {};
+      return {
+        ...row,
+        stockQty: meta.stockQty ?? 0,
+        checkLevel: meta.checkLevel ?? null,
+        belowCheckLevel: Boolean(meta.belowCheckLevel)
+      };
+    });
 
     const summary = result.summary[0] || {
       orders: 0, totalQty: 0, avgQty: 0, sellOrders: 0, purchaseOrders: 0, uniqueParties: 0
     };
-    summary.totalValue = result.itemBreakdown.reduce((sum, row) => sum + (row.value || 0), 0);
+    summary.totalValue = itemBreakdown.reduce((sum, row) => sum + (row.value || 0), 0);
 
     res.status(200).json({
       success: true,
@@ -1262,9 +1331,16 @@ exports.getConsolidationReport = async (req, res) => {
         statusBreakdown: result.statusBreakdown,
         trend: result.trend,
         granularity,
-        itemBreakdown: result.itemBreakdown,
+        itemBreakdown,
         categoryBreakdown: result.categoryBreakdown,
         categoryCatalog,
+        // Catalog-wide safety-stock picture, unaffected by the order filters
+        stockHealth: {
+          itemsTracked: [...itemMeta.values()].filter((m) => m.checkLevel !== null).length,
+          itemsBelow: [...itemMeta.values()].filter((m) => m.belowCheckLevel).length,
+          categoriesTracked: categoryCatalog.filter((c) => c.checkLevel !== null).length,
+          categoriesBelow: categoryCatalog.filter((c) => c.belowCheckLevel).length
+        },
         topParties: result.topParties
       }
     });

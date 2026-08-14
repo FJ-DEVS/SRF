@@ -1,6 +1,8 @@
 const Schema = require('../models/Schema');
 const Order = require('../models/Order');
 const Salesman = require('../models/Salesman');
+const Category = require('../models/Category');
+const Item = require('../models/Item');
 
 // Sell-order statuses that count as a completed sale for incentive points.
 // Widen this list if partially-completed orders should also earn points.
@@ -9,12 +11,13 @@ const COUNTED_STATUSES = ['delivered'];
 // --- Helpers -------------------------------------------------------------
 
 // Normalise + validate the arrays coming from the admin form.
+// Points are allocated per category — every item inside it earns the same rate.
 const buildAllocations = (allocations) =>
   (Array.isArray(allocations) ? allocations : [])
-    .filter((a) => a && a.item)
+    .filter((a) => a && a.category)
     .map((a) => ({
-      item: a.item,
-      itemName: (a.itemName || '').trim(),
+      category: a.category,
+      categoryName: (a.categoryName || '').trim(),
       points: Number(a.points) || 0
     }));
 
@@ -43,12 +46,37 @@ const nextTier = (points, tiers) => {
   return sorted.find((tier) => points < tier.pointsRequired) || null;
 };
 
+// { itemId(string) -> points } for a schema: an item earns the rate of the
+// category it belongs to. Categories are looked up live so a renamed category
+// keeps scoring.
+const pointsByItemFor = async (schema) => {
+  const allocations = schema.pointsAllocations || [];
+  if (allocations.length === 0) return new Map();
+
+  const categories = await Category.find({
+    _id: { $in: allocations.map((a) => a.category) }
+  })
+    .select('name')
+    .lean();
+  const nameById = new Map(categories.map((c) => [String(c._id), c.name]));
+
+  const pointsByCategoryName = new Map();
+  for (const alloc of allocations) {
+    // Fall back to the stored name when the category has since been deleted
+    const name = nameById.get(String(alloc.category)) || alloc.categoryName;
+    if (name) pointsByCategoryName.set(name, alloc.points);
+  }
+
+  const items = await Item.find({ category: { $in: [...pointsByCategoryName.keys()] } })
+    .select('category')
+    .lean();
+
+  return new Map(items.map((i) => [String(i._id), pointsByCategoryName.get(i.category)]));
+};
+
 // Compute { salesmanId(string) -> points } for a schema, from qualifying orders.
 const computePointsForSchema = async (schema) => {
-  const pointsByItem = new Map();
-  for (const alloc of schema.pointsAllocations) {
-    pointsByItem.set(String(alloc.item), alloc.points);
-  }
+  const pointsByItem = await pointsByItemFor(schema);
 
   const orders = await Order.find({
     type: 'sell order',
@@ -91,7 +119,7 @@ exports.createSchema = async (req, res) => {
     const tierList = buildTiers(tiers);
 
     if (allocations.length === 0) {
-      return res.status(400).json({ success: false, message: 'Add at least one item to the points table' });
+      return res.status(400).json({ success: false, message: 'Add at least one category to the points table' });
     }
     if (tierList.length === 0) {
       return res.status(400).json({ success: false, message: 'Add at least one achievement tier' });
@@ -191,7 +219,7 @@ exports.updateSchema = async (req, res) => {
     if (pointsAllocations !== undefined) {
       const allocations = buildAllocations(pointsAllocations);
       if (allocations.length === 0) {
-        return res.status(400).json({ success: false, message: 'Add at least one item to the points table' });
+        return res.status(400).json({ success: false, message: 'Add at least one category to the points table' });
       }
       schema.pointsAllocations = allocations;
     }

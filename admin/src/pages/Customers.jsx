@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
@@ -7,7 +7,10 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
 import { DEFAULT_SORT } from '../utils/sortOptions';
-import { Search, Plus, Edit2, Trash2, X, Eye, ShieldOff, ShieldCheck, UserCircle, Phone } from 'lucide-react';
+import {
+  Search, Plus, Edit2, Trash2, X, Eye, ShieldOff, ShieldCheck, UserCircle, Phone,
+  Upload, FileText, MapPin
+} from 'lucide-react';
 
 const PAYMENT_RATING = {
   good:    { label: 'Good Payer',    bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200', dot: 'bg-emerald-500' },
@@ -52,8 +55,12 @@ const Customers = () => {
     gstin: '',
     isBlocked: false,
     paymentRating: 'good',
-    assignedSalesman: ''
+    assignedSalesman: '',
+    gstCertificate: { url: '', key: '', name: '' },
+    locationLink: ''
   });
+  const certInputRef = useRef(null);
+  const [certUploading, setCertUploading] = useState(false);
 
   useEffect(() => {
     fetchCustomers();
@@ -149,7 +156,13 @@ const Customers = () => {
       gstin: customer.gstin || '',
       isBlocked: customer.isBlocked,
       paymentRating: customer.paymentRating || 'good',
-      assignedSalesman: customer.assignedSalesman?._id || customer.assignedSalesman || ''
+      assignedSalesman: customer.assignedSalesman?._id || customer.assignedSalesman || '',
+      gstCertificate: {
+        url: customer.gstCertificate?.url || '',
+        key: customer.gstCertificate?.key || '',
+        name: customer.gstCertificate?.name || ''
+      },
+      locationLink: customer.locationLink || ''
     });
     setShowModal(true);
   };
@@ -157,8 +170,40 @@ const Customers = () => {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedCustomer(null);
-    setFormData({ name: '', phone: '', gstin: '', isBlocked: false, paymentRating: 'good', assignedSalesman: '' });
+    setFormData({
+      name: '', phone: '', gstin: '', isBlocked: false, paymentRating: 'good', assignedSalesman: '',
+      gstCertificate: { url: '', key: '', name: '' }, locationLink: ''
+    });
   };
+
+  // The certificate lands on DigitalOcean Spaces first; the customer record
+  // only ever stores the returned link
+  const handleCertificateUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const payload = new FormData();
+    payload.append('file', file);
+    payload.append('folder', 'gst-certificates');
+
+    setCertUploading(true);
+    try {
+      const response = await api.post('/uploads', payload, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (response.data.success) {
+        setFormData((prev) => ({ ...prev, gstCertificate: response.data.data }));
+      }
+    } catch (error) {
+      showAlert('Upload Failed', error.response?.data?.message || 'Could not upload the certificate', 'error');
+    } finally {
+      setCertUploading(false);
+    }
+  };
+
+  const handleRemoveCertificate = () =>
+    setFormData((prev) => ({ ...prev, gstCertificate: { url: '', key: '', name: '' } }));
 
   const handleViewDetail = (customer) => {
     setDetailCustomer(customer);
@@ -190,6 +235,14 @@ const Customers = () => {
     { label: 'Name', value: customer?.name, type: 'text', key: 'name' },
     { label: 'Phone', value: customer?.phone, type: 'text', key: 'phone' },
     { label: 'GSTIN', value: customer?.gstin || '—', type: 'text', key: 'gstin' },
+    {
+      label: 'GST Certificate',
+      value: customer?.gstCertificate?.url || '',
+      type: 'link',
+      linkLabel: customer?.gstCertificate?.name || 'View certificate',
+      key: 'gstCertificate'
+    },
+    { label: 'Location', value: customer?.locationLink || '', type: 'link', linkLabel: 'Open in maps', key: 'locationLink' },
     { label: 'Assigned Salesman', value: customer?.assignedSalesman?.name || '—', type: 'text', key: 'assignedSalesman' },
     { label: 'Status', value: customer?.isBlocked ? 'Blocked' : 'Active', type: 'badge', key: 'status' },
     { label: 'Payment Rating', value: PAYMENT_RATING[customer?.paymentRating]?.label || 'Good Payer', type: 'text', key: 'paymentRating' },
@@ -302,6 +355,28 @@ const Customers = () => {
                       <td className="max-w-[260px]">
                         <p className="truncate font-semibold text-slate-900">{customer.name}</p>
                         {customer.gstin && <p className="truncate text-[11px] text-slate-400">GSTIN: {customer.gstin}</p>}
+                        <div className="mt-0.5 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {customer.gstCertificate?.url && (
+                            <a
+                              href={customer.gstCertificate.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:underline"
+                            >
+                              <FileText className="h-3 w-3" /> Certificate
+                            </a>
+                          )}
+                          {customer.locationLink && (
+                            <a
+                              href={customer.locationLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:underline"
+                            >
+                              <MapPin className="h-3 w-3" /> Location
+                            </a>
+                          )}
+                        </div>
                       </td>
                       <td>{customer.phone}</td>
                       <td>{customer.assignedSalesman?.name || '—'}</td>
@@ -405,6 +480,64 @@ const Customers = () => {
                   value={formData.gstin}
                   onChange={(e) => setFormData({ ...formData, gstin: e.target.value })}
                   className="w-full"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block">
+                  GST Certificate <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                {formData.gstCertificate.url ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                    <FileText className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <a
+                      href={formData.gstCertificate.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 truncate text-[13px] font-medium text-indigo-600 hover:underline"
+                    >
+                      {formData.gstCertificate.name || 'View certificate'}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleRemoveCertificate}
+                      className="srf-row-action shrink-0 text-rose-500 hover:bg-rose-50"
+                      title="Remove"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => certInputRef.current?.click()}
+                    disabled={certUploading}
+                    className="srf-btn srf-btn-secondary w-full !justify-center"
+                  >
+                    <Upload className="h-4 w-4 text-slate-400" />
+                    {certUploading ? 'Uploading…' : 'Upload certificate'}
+                  </button>
+                )}
+                <input
+                  ref={certInputRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic"
+                  onChange={handleCertificateUpload}
+                  className="hidden"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">PDF or image, up to 10 MB.</p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block">
+                  Location Link <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  type="url"
+                  value={formData.locationLink}
+                  onChange={(e) => setFormData({ ...formData, locationLink: e.target.value })}
+                  className="w-full"
+                  placeholder="https://maps.google.com/…"
                 />
               </div>
 

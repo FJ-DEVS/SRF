@@ -453,8 +453,12 @@ const RollerPlacements = () => {
                         <p className="truncate text-[14px] font-semibold text-slate-900">{item.name}</p>
                         <p className="mt-0.5 text-[11px] text-slate-400">
                           {item.category || 'Uncategorised'} · Stock {item.quantity ?? 0}
+                          {item.effectiveCheckLevel != null && ` · Check ${item.effectiveCheckLevel}`}
                           {item.placedQty > 0 && ` · ${item.placedQty} placed`}
                         </p>
+                        {item.belowCheckLevel && (
+                          <p className="mt-0.5 text-[10px] font-semibold text-amber-600">Below check level</p>
+                        )}
                       </div>
 
                       <div className="shrink-0 text-right">
