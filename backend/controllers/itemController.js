@@ -3,6 +3,8 @@ const Item = require('../models/Item');
 const Order = require('../models/Order');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
+const { parseCheckLevel, categoryCheckLevels, decorateCheckLevel, belowCheckLevelQuery } =
+  require('../utils/checkLevel');
 
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -10,13 +12,14 @@ const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Create item
 exports.createItem = async (req, res) => {
   try {
-    const { name, price, quantity, category } = req.body;
+    const { name, price, quantity, category, checkLevel } = req.body;
 
     const item = new Item({
       name,
       price,
       quantity,
-      category
+      category,
+      checkLevel: parseCheckLevel(checkLevel) ?? null
     });
 
     await item.save();
@@ -41,7 +44,7 @@ exports.createItem = async (req, res) => {
 // Get all items
 exports.getAllItems = async (req, res) => {
   try {
-    const { search, category, sort, page = 1, limit = 10 } = req.query;
+    const { search, category, sort, stockState, page = 1, limit = 10 } = req.query;
 
     const conditions = [];
 
@@ -54,21 +57,24 @@ exports.getAllItems = async (req, res) => {
       });
     }
 
-    // Category filter — matches the category field, or the name for
-    // legacy items that carry the size in their name instead
+    // Category filter — strictly the category field. It used to fall back to a
+    // name match for items that carried the size in their name, but that made
+    // "2mm" pull in "0.72mm" and "1.2mm". Every item now stores its category.
     if (category) {
-      conditions.push({
-        $or: [
-          { category },
-          { name: { $regex: escapeRegex(category), $options: 'i' } }
-        ]
-      });
+      conditions.push({ category });
+    }
+
+    // Stock health filter — "below" / "above" the effective check level
+    const levelsByCategory = await categoryCheckLevels();
+    if (stockState === 'below' || stockState === 'above') {
+      const below = belowCheckLevelQuery(levelsByCategory);
+      conditions.push(stockState === 'below' ? below : { $nor: [below] });
     }
 
     const query = conditions.length ? { $and: conditions } : {};
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const items = await applySort(Item.find(query), sort)
+    const items = await applySort(Item.find(query).lean(), sort)
       .skip(skip)
       .limit(parseInt(limit));
 
@@ -76,7 +82,7 @@ exports.getAllItems = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: items,
+      data: items.map((item) => decorateCheckLevel(item, levelsByCategory)),
       pagination: {
         total,
         page: parseInt(page),
@@ -122,13 +128,15 @@ exports.getItem = async (req, res) => {
 // Update item
 exports.updateItem = async (req, res) => {
   try {
-    const { name, price, quantity, category } = req.body;
-    
+    const { name, price, quantity, category, checkLevel } = req.body;
+
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (price !== undefined) updateData.price = price;
     if (quantity !== undefined) updateData.quantity = quantity;
     if (category !== undefined) updateData.category = category;
+    const parsedCheckLevel = parseCheckLevel(checkLevel);
+    if (parsedCheckLevel !== undefined) updateData.checkLevel = parsedCheckLevel;
 
     const item = await Item.findByIdAndUpdate(
       req.params.id,
@@ -177,19 +185,16 @@ exports.getItemsForSalesman = async (req, res) => {
     }
 
     if (category) {
-      conditions.push({
-        $or: [
-          { category },
-          { name: { $regex: escapeRegex(category), $options: 'i' } }
-        ]
-      });
+      conditions.push({ category });
     }
 
     const query = conditions.length ? { $and: conditions } : {};
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    const levelsByCategory = await categoryCheckLevels();
+
     const items = await applySort(
-      Item.find(query).select('name price quantity category createdAt'),
+      Item.find(query).select('name price quantity category checkLevel createdAt').lean(),
       sort
     )
       .skip(skip)
@@ -199,7 +204,7 @@ exports.getItemsForSalesman = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: items,
+      data: items.map((item) => decorateCheckLevel(item, levelsByCategory)),
       pagination: {
         total,
         page: parseInt(page),
@@ -361,6 +366,7 @@ exports.bulkImportItems = async (req, res) => {
       const rowLabel = row.name ? row.name : `Row ${i + 1}`;
       const price = row.price !== undefined && row.price !== '' ? parseFloat(row.price) : undefined;
       const quantity = row.quantity !== undefined && row.quantity !== '' ? parseInt(row.quantity, 10) : undefined;
+      const checkLevel = parseCheckLevel(row.checkLevel);
 
       try {
         if (row._id) {
@@ -369,6 +375,7 @@ exports.bulkImportItems = async (req, res) => {
           if (price !== undefined && !isNaN(price)) updateData.price = price;
           if (quantity !== undefined && !isNaN(quantity)) updateData.quantity = quantity;
           if (row.category !== undefined) updateData.category = String(row.category).trim();
+          if (checkLevel !== undefined) updateData.checkLevel = checkLevel;
 
           const item = await Item.findByIdAndUpdate(row._id, updateData, { new: true, runValidators: true });
           if (!item) {
@@ -385,7 +392,8 @@ exports.bulkImportItems = async (req, res) => {
             name: String(row.name).trim(),
             price,
             quantity,
-            category: row.category ? String(row.category).trim() : ''
+            category: row.category ? String(row.category).trim() : '',
+            checkLevel: checkLevel ?? null
           });
           await item.save();
           created++;

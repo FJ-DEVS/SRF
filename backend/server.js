@@ -33,6 +33,7 @@ const schemaRoutes = require('./routes/schema');
 const rakRoutes = require('./routes/rak');
 const rollerRoutes = require('./routes/roller');
 const placementRoutes = require('./routes/placement');
+const uploadRoutes = require('./routes/upload');
 const Category = require('./models/Category');
 
 // Use routes
@@ -48,6 +49,7 @@ app.use('/api/schemas', schemaRoutes);
 app.use('/api/raks', rakRoutes);
 app.use('/api/rollers', rollerRoutes);
 app.use('/api/placements', placementRoutes);
+app.use('/api/uploads', uploadRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];
@@ -87,9 +89,59 @@ async function migratePlacementCapacity() {
   }
 }
 
+// Incentive points used to be allocated per item; they are now allocated per
+// category. Rewrite any allocation still written the old way to the category
+// its item belongs to — the highest rate wins when several items collapse into
+// the same category.
+async function migrateSchemaAllocations() {
+  const Item = require('./models/Item');
+  const schemas = mongoose.connection.collection('schemas');
+
+  const legacy = await schemas.find({ 'pointsAllocations.item': { $exists: true } }).toArray();
+  if (legacy.length === 0) return;
+
+  const [items, categories] = await Promise.all([
+    Item.find().select('category').lean(),
+    Category.find().select('name').lean()
+  ]);
+  const categoryByItemId = new Map(items.map((i) => [String(i._id), i.category]));
+  const categoryIdByName = new Map(categories.map((c) => [c.name, c._id]));
+
+  let converted = 0;
+  for (const schema of legacy) {
+    const byCategoryId = new Map();
+    for (const alloc of schema.pointsAllocations || []) {
+      // Allocations already on the new shape are kept as they are
+      const categoryId = alloc.category || categoryIdByName.get(categoryByItemId.get(String(alloc.item)));
+      if (!categoryId) continue;
+      const key = String(categoryId);
+      const points = Number(alloc.points) || 0;
+      if (!byCategoryId.has(key) || byCategoryId.get(key).points < points) {
+        byCategoryId.set(key, {
+          category: categoryId,
+          categoryName: alloc.categoryName || categoryByItemId.get(String(alloc.item)) || '',
+          points
+        });
+      }
+    }
+
+    await schemas.updateOne(
+      { _id: schema._id },
+      { $set: { pointsAllocations: [...byCategoryId.values()] } }
+    );
+    converted++;
+  }
+
+  console.warn(
+    `Converted item-based incentive points to category-based on ${converted} schema(s). ` +
+    'Items with no category were dropped — review them in Admin → Schema.'
+  );
+}
+
 mongoose.connection.once('open', () => {
   seedCategories().catch(console.error);
   migratePlacementCapacity().catch(console.error);
+  migrateSchemaAllocations().catch(console.error);
 });
 
 const port = process.env.PORT;

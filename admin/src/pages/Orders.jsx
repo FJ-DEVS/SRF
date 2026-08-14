@@ -33,6 +33,35 @@ const orderTotal = (order) =>
 const orderQty = (order) =>
   order.items.reduce((total, oi) => total + (oi.quantity || 0), 0);
 
+// Sell and purchase orders sit in the same list — colour tells them apart at a
+// glance: money coming in (indigo) vs. stock coming in (emerald)
+const TYPE_STYLES = {
+  'sell order': {
+    label: 'Sell Order',
+    row: 'bg-indigo-50/40 hover:!bg-indigo-50/70',
+    badge: 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200',
+    dot: 'bg-indigo-500'
+  },
+  'purchase order': {
+    label: 'Purchase Order',
+    row: 'bg-emerald-50/40 hover:!bg-emerald-50/70',
+    badge: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+    dot: 'bg-emerald-500'
+  }
+};
+
+const typeStyle = (type) => TYPE_STYLES[type] || TYPE_STYLES['sell order'];
+
+const TypeBadge = ({ type }) => {
+  const style = typeStyle(type);
+  return (
+    <span className={`srf-badge ${style.badge}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {style.label}
+    </span>
+  );
+};
+
 const Orders = () => {
   const [searchParams] = useSearchParams();
   const [orders, setOrders] = useState([]);
@@ -522,7 +551,7 @@ const Orders = () => {
         </div>
 
         {/* Quick filters */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setTodayOnly((v) => !v)}
@@ -531,6 +560,7 @@ const Orders = () => {
             <CalendarDays className="h-3 w-3" />
             Today's orders
           </button>
+
           {(searchTerm || statusFilter || typeFilter || monthFilter || todayOnly) && (
             <button
               type="button"
@@ -548,6 +578,24 @@ const Orders = () => {
               Clear filters
             </button>
           )}
+
+          {/* Row colour legend — doubles as a type filter */}
+          <div className="ml-auto flex items-center gap-3">
+            {Object.entries(TYPE_STYLES).map(([type, style]) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setTypeFilter(typeFilter === type ? '' : type)}
+                className={`flex items-center gap-1.5 text-[11px] font-medium transition-colors ${
+                  typeFilter === type ? 'text-slate-800' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title={`Show only ${style.label.toLowerCase()}s`}
+              >
+                <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
+                {style.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -584,7 +632,7 @@ const Orders = () => {
                   {orders.map((order) => (
                     <tr
                       key={order._id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer ${typeStyle(order.type).row}`}
                       onClick={() => { setSelectedOrder(order); setShowDetailModal(true); }}
                     >
                       <td className="whitespace-nowrap">
@@ -592,7 +640,10 @@ const Orders = () => {
                       </td>
                       <td className="max-w-[240px]">
                         <p className="truncate font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                        <p className="text-[11px] capitalize text-slate-400">{order.type} · {orderQty(order)} pcs</p>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <TypeBadge type={order.type} />
+                          <span className="text-[11px] text-slate-400">{orderQty(order)} pcs</span>
+                        </div>
                       </td>
                       <td><StatusBadge status={order.status} /></td>
                       <td className="max-w-[140px] truncate">{order.cargo?.name || '—'}</td>
@@ -615,16 +666,19 @@ const Orders = () => {
               {orders.map((order) => (
                 <div
                   key={order._id}
-                  className="p-3.5"
+                  className={`p-3.5 ${typeStyle(order.type).row}`}
                   onClick={() => { setSelectedOrder(order); setShowDetailModal(true); }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                      <p className="mt-0.5 text-[11px] capitalize text-slate-400">
+                      <p className="mt-0.5 text-[11px] text-slate-400">
                         {new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                        {' · '}{order.type}{' · '}{orderQty(order)} pcs
+                        {' · '}{orderQty(order)} pcs
                       </p>
+                      <div className="mt-1">
+                        <TypeBadge type={order.type} />
+                      </div>
                     </div>
                     <StatusBadge status={order.status} />
                   </div>
@@ -930,9 +984,7 @@ const Orders = () => {
               {/* Summary row */}
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge status={selectedOrder.status} />
-                <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">
-                  {selectedOrder.type}
-                </span>
+                <TypeBadge type={selectedOrder.type} />
                 {selectedOrder.cargo?.name && (
                   <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">
                     <Truck className="h-3 w-3" /> {selectedOrder.cargo.name}

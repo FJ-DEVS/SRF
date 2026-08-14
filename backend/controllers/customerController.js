@@ -2,17 +2,27 @@ const Customer = require('../models/Customer');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
 
+// The GST certificate is uploaded separately (POST /api/uploads), so what
+// arrives here is just the stored file descriptor — keep only our own fields
+const normaliseCertificate = (cert) => ({
+  url: (cert?.url || '').trim(),
+  key: (cert?.key || '').trim(),
+  name: (cert?.name || '').trim()
+});
+
 // Create customer
 exports.createCustomer = async (req, res) => {
   try {
-    const { phone, name, gstin, paymentRating, assignedSalesman } = req.body;
+    const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink } = req.body;
 
     const customer = new Customer({
       phone,
       name,
       gstin,
       ...(paymentRating && { paymentRating }),
-      assignedSalesman: assignedSalesman || null
+      assignedSalesman: assignedSalesman || null,
+      gstCertificate: normaliseCertificate(gstCertificate),
+      locationLink: (locationLink || '').trim()
     });
 
     await customer.save();
@@ -116,8 +126,10 @@ exports.getCustomer = async (req, res) => {
 // Update customer
 exports.updateCustomer = async (req, res) => {
   try {
-    const { phone, name, gstin, isBlocked, paymentRating, assignedSalesman } = req.body;
-    
+    const {
+      phone, name, gstin, isBlocked, paymentRating, assignedSalesman, gstCertificate, locationLink
+    } = req.body;
+
     const updateData = {};
     if (phone !== undefined) updateData.phone = phone;
     if (name !== undefined) updateData.name = name;
@@ -125,6 +137,8 @@ exports.updateCustomer = async (req, res) => {
     if (isBlocked !== undefined) updateData.isBlocked = isBlocked;
     if (paymentRating !== undefined) updateData.paymentRating = paymentRating;
     if (assignedSalesman !== undefined) updateData.assignedSalesman = assignedSalesman || null;
+    if (gstCertificate !== undefined) updateData.gstCertificate = normaliseCertificate(gstCertificate);
+    if (locationLink !== undefined) updateData.locationLink = (locationLink || '').trim();
 
     const customer = await Customer.findByIdAndUpdate(
       req.params.id,

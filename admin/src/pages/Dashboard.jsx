@@ -13,7 +13,9 @@ import {
   UserCircle,
   TrendingUp,
   Receipt,
-  ArrowUpRight
+  ArrowUpRight,
+  AlertTriangle,
+  Layers
 } from 'lucide-react';
 import {
   AreaChart,
@@ -79,6 +81,9 @@ const Dashboard = () => {
   const activeStatusData = statusData.filter((s) => s.value > 0);
 
   const trendData = stats?.trends || [];
+  const stockAlerts = stats?.stockAlerts || {};
+  const lowItems = stockAlerts.items || [];
+  const lowCategories = stockAlerts.categories || [];
 
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -213,6 +218,89 @@ const Dashboard = () => {
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
+
+      {/* Check level — stock at or below its safety line */}
+      <div className="srf-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-5">
+          <div>
+            <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-slate-900">
+              <AlertTriangle className={`h-4 w-4 ${stockAlerts.itemsBelow ? 'text-amber-500' : 'text-slate-300'}`} />
+              Check Level Alerts
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              {stockAlerts.itemsBelow || 0} item{stockAlerts.itemsBelow === 1 ? '' : 's'} and{' '}
+              {stockAlerts.categoriesBelow || 0} categor{stockAlerts.categoriesBelow === 1 ? 'y' : 'ies'} at or below check level
+            </p>
+          </div>
+          <Link
+            to="/items?stockState=below"
+            className="text-xs font-semibold text-indigo-600 hover:text-indigo-500"
+          >
+            View items
+          </Link>
+        </div>
+
+        {lowItems.length === 0 && lowCategories.length === 0 ? (
+          <p className="px-5 py-8 text-center text-[13px] text-slate-400">
+            Everything is above its check level.
+          </p>
+        ) : (
+          <div className="mt-2 grid gap-px bg-slate-100 sm:grid-cols-2">
+            {/* Items */}
+            <div className="bg-white">
+              <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 sm:px-5">
+                Items
+              </p>
+              {lowItems.length === 0 ? (
+                <p className="px-4 pb-4 text-[13px] text-slate-400 sm:px-5">None</p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {lowItems.map((item) => (
+                    <div key={item._id} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                        <Package className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-slate-800">{item.name}</p>
+                        <p className="text-[11px] text-slate-400">{item.category || 'Uncategorised'}</p>
+                      </div>
+                      <span className="shrink-0 text-[12px] font-semibold tabular-nums text-amber-700">
+                        {item.quantity} / {item.effectiveCheckLevel}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Categories */}
+            <div className="bg-white">
+              <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400 sm:px-5">
+                Categories
+              </p>
+              {lowCategories.length === 0 ? (
+                <p className="px-4 pb-4 text-[13px] text-slate-400 sm:px-5">None</p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {lowCategories.map((cat) => (
+                    <div key={cat.category} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                        <Layers className="h-3.5 w-3.5" />
+                      </span>
+                      <p className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-800">
+                        {cat.category || 'Uncategorised'}
+                      </p>
+                      <span className="shrink-0 text-[12px] font-semibold tabular-nums text-amber-700">
+                        {cat.stockQty} / {cat.checkLevel}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Recent orders + team */}

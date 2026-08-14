@@ -77,6 +77,18 @@ const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit }) => {
           </span>
         );
 
+      case 'link':
+        return (
+          <a
+            href={value}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-medium text-indigo-600 hover:underline break-all"
+          >
+            {field.linkLabel || value}
+          </a>
+        );
+
       case 'currency':
         return (
           <span className="text-sm text-slate-800 font-medium">

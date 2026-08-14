@@ -16,7 +16,10 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   RotateCcw,
-  Filter
+  Filter,
+  AlertTriangle,
+  ShieldCheck,
+  UserRound
 } from 'lucide-react';
 import {
   AreaChart,
@@ -179,24 +182,37 @@ const Consolidation = () => {
   const [qtyDraft, setQtyDraft] = useState({ minQty: '', maxQty: '' });
   const [qtyFilter, setQtyFilter] = useState({ minQty: '', maxQty: '' });
   const [items, setItems] = useState([]);
+  const [salesmen, setSalesmen] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Item list for the item filter dropdown
+  // Category consolidation has its own two controls: whose orders to count,
+  // and whether to show only stock above / below the check level
+  const [categorySalesman, setCategorySalesman] = useState('');
+  const [salesmanData, setSalesmanData] = useState(null);
+  const [salesmanLoading, setSalesmanLoading] = useState(false);
+  const [checkFilter, setCheckFilter] = useState('');
+
+  // Item + salesman lists for the filter dropdowns
   useEffect(() => {
-    const fetchItems = async () => {
+    const fetchLists = async () => {
       try {
-        const response = await api.get('/items', { params: { limit: 1000 } });
-        if (response.data.success) {
-          const sorted = [...response.data.data].sort((a, b) => a.name.localeCompare(b.name));
-          setItems(sorted);
+        const [itemsRes, salesmenRes] = await Promise.all([
+          api.get('/items', { params: { limit: 1000 } }),
+          api.get('/salesman', { params: { limit: 500 } })
+        ]);
+        if (itemsRes.data.success) {
+          setItems([...itemsRes.data.data].sort((a, b) => a.name.localeCompare(b.name)));
+        }
+        if (salesmenRes.data.success) {
+          setSalesmen([...salesmenRes.data.data].sort((a, b) => a.name.localeCompare(b.name)));
         }
       } catch (error) {
-        console.error('Error fetching items:', error);
+        console.error('Error fetching filter lists:', error);
       }
     };
-    fetchItems();
+    fetchLists();
   }, []);
 
   // Debounce quantity inputs so we don't refetch on every keystroke
@@ -205,23 +221,28 @@ const Consolidation = () => {
     return () => clearTimeout(t);
   }, [qtyDraft]);
 
+  // The filter row translated into query params — the salesman-scoped fetch
+  // reuses it so both views cover the same period
+  const reportParams = () => {
+    const params = {};
+    const range = filters.preset === 'custom'
+      ? { start: filters.startDate, end: filters.endDate }
+      : rangeForPreset(filters.preset);
+    if (range?.start) params.startDate = range.start;
+    if (range?.end) params.endDate = range.end;
+    if (filters.type) params.type = filters.type;
+    if (filters.status) params.status = filters.status;
+    if (filters.item) params.item = filters.item;
+    if (qtyFilter.minQty !== '') params.minQty = qtyFilter.minQty;
+    if (qtyFilter.maxQty !== '') params.maxQty = qtyFilter.maxQty;
+    return params;
+  };
+
   useEffect(() => {
     const fetchReport = async () => {
       try {
         setRefreshing(true);
-        const params = {};
-        const range = filters.preset === 'custom'
-          ? { start: filters.startDate, end: filters.endDate }
-          : rangeForPreset(filters.preset);
-        if (range?.start) params.startDate = range.start;
-        if (range?.end) params.endDate = range.end;
-        if (filters.type) params.type = filters.type;
-        if (filters.status) params.status = filters.status;
-        if (filters.item) params.item = filters.item;
-        if (qtyFilter.minQty !== '') params.minQty = qtyFilter.minQty;
-        if (qtyFilter.maxQty !== '') params.maxQty = qtyFilter.maxQty;
-
-        const response = await api.get('/orders/consolidation', { params });
+        const response = await api.get('/orders/consolidation', { params: reportParams() });
         if (response.data.success) {
           setData(response.data.data);
         }
@@ -235,10 +256,36 @@ const Consolidation = () => {
     fetchReport();
   }, [filters, qtyFilter]);
 
+  // Second pass, scoped to one salesman's own orders. Only the category
+  // consolidation reads it, so the rest of the page stays on the full picture.
+  useEffect(() => {
+    if (!categorySalesman) {
+      setSalesmanData(null);
+      return;
+    }
+    const fetchForSalesman = async () => {
+      try {
+        setSalesmanLoading(true);
+        const response = await api.get('/orders/consolidation', {
+          params: { ...reportParams(), salesman: categorySalesman }
+        });
+        if (response.data.success) setSalesmanData(response.data.data);
+      } catch (error) {
+        console.error('Error fetching salesman consolidation:', error);
+        setSalesmanData(null);
+      } finally {
+        setSalesmanLoading(false);
+      }
+    };
+    fetchForSalesman();
+  }, [categorySalesman, filters, qtyFilter]);
+
   const resetFilters = () => {
     setFilters(DEFAULT_FILTERS);
     setQtyDraft({ minQty: '', maxQty: '' });
     setQtyFilter({ minQty: '', maxQty: '' });
+    setCategorySalesman('');
+    setCheckFilter('');
   };
 
   if (loading) {
@@ -268,46 +315,67 @@ const Consolidation = () => {
       qty: statusByKey[s].qty
     }));
 
+  // Order columns follow the salesman picker; catalog columns never do — stock
+  // on hand belongs to the shop, not to a salesman
+  const categorySource = categorySalesman ? salesmanData : data;
+
   // Category summary — the 800+ item catalog rolled up into its handful of
   // categories. Catalog counts come from the item master (unfiltered); order
   // counts come from the filtered slice, so both are always in view.
-  const categoryRows = (() => {
+  const allCategoryRows = (() => {
     const byName = new Map();
     const row = (name) => {
       if (!byName.has(name)) {
         byName.set(name, {
           category: name,
           items: 0, stockQty: 0, stockValue: 0,
+          checkLevel: null, belowCheckLevel: false, itemsBelowCheck: 0,
           orders: 0, qty: 0, sellQty: 0, purchaseQty: 0, value: 0, orderedItems: 0
         });
       }
       return byName.get(name);
     };
     (data?.categoryCatalog || []).forEach((c) => Object.assign(row(c.category), {
-      items: c.items, stockQty: c.stockQty, stockValue: c.stockValue
+      items: c.items, stockQty: c.stockQty, stockValue: c.stockValue,
+      checkLevel: c.checkLevel, belowCheckLevel: c.belowCheckLevel, itemsBelowCheck: c.itemsBelowCheck
     }));
-    (data?.categoryBreakdown || []).forEach((c) => Object.assign(row(c.category), {
+    (categorySource?.categoryBreakdown || []).forEach((c) => Object.assign(row(c.category), {
       orders: c.orders, qty: c.qty, sellQty: c.sellQty,
       purchaseQty: c.purchaseQty, value: c.value, orderedItems: c.items
     }));
     return [...byName.values()].sort((a, b) => b.qty - a.qty || b.items - a.items);
   })();
 
+  // Check-level view: "below" is a breached line, "above" a healthy one.
+  // Categories and items with no check level fall out of both.
+  const matchesCheckFilter = (row) => {
+    if (checkFilter === 'below') return row.belowCheckLevel;
+    if (checkFilter === 'above') return row.checkLevel != null && !row.belowCheckLevel;
+    return true;
+  };
+
+  const categoryRows = allCategoryRows.filter(matchesCheckFilter);
+
   const categoryTotals = categoryRows.reduce((acc, r) => ({
     items: acc.items + r.items,
     stockQty: acc.stockQty + r.stockQty,
+    // Column sum — only used once a check-level filter drops rows, where the
+    // distinct order count from the API no longer describes what's on screen
+    orders: acc.orders + r.orders,
     qty: acc.qty + r.qty,
     sellQty: acc.sellQty + r.sellQty,
     purchaseQty: acc.purchaseQty + r.purchaseQty,
     value: acc.value + r.value
-  }), { items: 0, stockQty: 0, qty: 0, sellQty: 0, purchaseQty: 0, value: 0 });
+  }), { items: 0, stockQty: 0, orders: 0, qty: 0, sellQty: 0, purchaseQty: 0, value: 0 });
 
   const categoryChart = categoryRows
     .filter((r) => r.qty > 0)
     .map((r) => ({ name: r.category, qty: r.qty, orders: r.orders, value: r.value }));
 
-  const itemBreakdown = data?.itemBreakdown || [];
+  const itemBreakdown = (data?.itemBreakdown || []).filter(matchesCheckFilter);
   const topItems = itemBreakdown.slice(0, 10).map((row) => ({ ...row, name: row.name }));
+  const stockHealth = data?.stockHealth || {};
+  const selectedSalesman = salesmen.find((s) => s._id === categorySalesman);
   const topParties = (data?.topParties || []).map((p) => ({
     ...p,
     name: p.partyType === 'Vendor' ? `${p.name} (V)` : p.name
@@ -586,6 +654,70 @@ const Consolidation = () => {
           )}
         </ChartCard>
 
+        {/* Check level (safety stock) — scopes the category and item tables below */}
+        <div className="srf-card p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">Check Level</h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Safety stock line per item and category. Anything at or below it needs reordering.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {[
+                { value: '', label: 'All', icon: null },
+                { value: 'below', label: 'Below check level', icon: AlertTriangle },
+                { value: 'above', label: 'Above check level', icon: ShieldCheck }
+              ].map((opt) => {
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setCheckFilter(opt.value)}
+                    className={`srf-chip ${checkFilter === opt.value ? 'srf-chip-active' : ''}`}
+                  >
+                    {Icon && <Icon className="h-3 w-3" />}
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: 'Items below check level', value: stockHealth.itemsBelow, tone: 'amber' },
+              { label: 'Items tracked', value: stockHealth.itemsTracked, tone: 'slate' },
+              { label: 'Categories below check level', value: stockHealth.categoriesBelow, tone: 'amber' },
+              { label: 'Categories tracked', value: stockHealth.categoriesTracked, tone: 'slate' }
+            ].map((tile) => (
+              <div
+                key={tile.label}
+                className={`rounded-xl border p-3 ${
+                  tile.tone === 'amber' && tile.value > 0
+                    ? 'border-amber-200 bg-amber-50/70'
+                    : 'border-slate-200 bg-slate-50/60'
+                }`}
+              >
+                <p className={`font-display text-lg font-bold ${
+                  tile.tone === 'amber' && tile.value > 0 ? 'text-amber-700' : 'text-slate-900'
+                }`}>
+                  {formatNumber(tile.value)}
+                </p>
+                <p className="mt-0.5 text-[10.5px] font-medium leading-tight text-slate-500">{tile.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {checkFilter && (
+            <p className="mt-3 text-[11px] text-slate-400">
+              Showing only {checkFilter === 'below' ? 'items and categories at or below' : 'items and categories above'}{' '}
+              their check level — anything without a check level is hidden.
+            </p>
+          )}
+        </div>
+
         {/* Category summary — detailed quantities rolled up per item category */}
         <div className="space-y-4">
           <div>
@@ -603,9 +735,14 @@ const Consolidation = () => {
               </p>
             ) : (
               categoryRows.map((row) => (
-                <div key={row.category} className="srf-card p-3.5">
+                <div
+                  key={row.category}
+                  className={`srf-card p-3.5 ${row.belowCheckLevel ? '!border-amber-200 !bg-amber-50/60' : ''}`}
+                >
                   <div className="flex items-center gap-1.5">
-                    <Layers className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    {row.belowCheckLevel
+                      ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                      : <Layers className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
                     <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                       {row.category}
                     </p>
@@ -622,6 +759,9 @@ const Consolidation = () => {
                     </p>
                     <p className="tabular-nums">
                       Stock <span className="font-semibold text-slate-700">{formatNumber(row.stockQty)}</span>
+                      {row.checkLevel != null && (
+                        <> · Check <span className="font-semibold text-slate-700">{formatNumber(row.checkLevel)}</span></>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -656,14 +796,38 @@ const Consolidation = () => {
           </ChartCard>
 
           {/* Table view of the same numbers */}
-          <div className="srf-card overflow-hidden">
-            <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
-              <h3 className="text-sm font-semibold text-slate-800">Category Consolidation</h3>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Catalog columns cover every item; order columns follow the filters above.
-                An order spanning two categories is counted in both, so the order total is
-                the distinct matched count.
-              </p>
+          <div className={`srf-card overflow-hidden transition-opacity ${salesmanLoading ? 'opacity-60' : ''}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-slate-800">Category Consolidation</h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Catalog columns cover every item; order columns follow the filters above.
+                  An order spanning two categories is counted in both, so the order total is
+                  the distinct matched count.
+                  {selectedSalesman && (
+                    <>
+                      {' '}Order columns count only orders booked by{' '}
+                      <span className="font-semibold text-slate-700">{selectedSalesman.name}</span>;
+                      stock stays shop-wide.
+                    </>
+                  )}
+                </p>
+              </div>
+              <label className="flex shrink-0 items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  <UserRound className="h-3.5 w-3.5" /> Salesman
+                </span>
+                <select
+                  value={categorySalesman}
+                  onChange={(e) => setCategorySalesman(e.target.value)}
+                  className={`${selectClass} max-w-[190px]`}
+                >
+                  <option value="">All salesmen</option>
+                  {salesmen.map((s) => (
+                    <option key={s._id} value={s._id}>{s.name}</option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             {/* Mobile: stacked rows, no horizontal scroll */}
@@ -672,15 +836,22 @@ const Consolidation = () => {
                 <p className="py-10 text-center text-sm text-slate-400">No item categories found</p>
               ) : (
                 categoryRows.map((row) => (
-                  <div key={row.category} className="px-4 py-3">
+                  <div key={row.category} className={`px-4 py-3 ${row.belowCheckLevel ? 'bg-amber-50/60' : ''}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-800">{row.category}</p>
+                      <p className="text-sm font-medium text-slate-800">
+                        {row.category}
+                        {row.belowCheckLevel && (
+                          <AlertTriangle className="ml-1 inline h-3.5 w-3.5 text-amber-500" />
+                        )}
+                      </p>
                       <p className="shrink-0 text-sm font-medium tabular-nums text-slate-800">
                         {formatCurrency(row.value)}
                       </p>
                     </div>
                     <p className="mt-1 text-xs tabular-nums text-slate-500">
                       {formatNumber(row.items)} items · Stock {formatNumber(row.stockQty)}
+                      {row.checkLevel != null && ` · Check ${formatNumber(row.checkLevel)}`}
+                      {row.itemsBelowCheck > 0 && ` · ${formatNumber(row.itemsBelowCheck)} item(s) low`}
                     </p>
                     <p className="text-xs tabular-nums text-slate-500">
                       {formatNumber(row.orders)} {row.orders === 1 ? 'order' : 'orders'} · Qty{' '}
@@ -700,6 +871,7 @@ const Consolidation = () => {
                     <th>Category</th>
                     <th className="text-right">Items</th>
                     <th className="text-right">Stock Qty</th>
+                    <th className="text-right">Check Level</th>
                     <th className="text-right">Orders</th>
                     <th className="text-right">Ordered Qty</th>
                     <th className="text-right">Sell Qty</th>
@@ -710,17 +882,36 @@ const Consolidation = () => {
                 <tbody>
                   {categoryRows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-slate-400">
+                      <td colSpan={9} className="py-10 text-center text-slate-400">
                         No item categories found
                       </td>
                     </tr>
                   ) : (
                     <>
                       {categoryRows.map((row) => (
-                        <tr key={row.category}>
-                          <td className="font-medium text-slate-800">{row.category}</td>
+                        <tr key={row.category} className={row.belowCheckLevel ? 'bg-amber-50/60' : ''}>
+                          <td className="font-medium text-slate-800">
+                            <span className="inline-flex items-center gap-1.5">
+                              {row.category}
+                              {row.belowCheckLevel && (
+                                <span className="srf-badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200">
+                                  <AlertTriangle className="h-3 w-3" /> low
+                                </span>
+                              )}
+                            </span>
+                            {row.itemsBelowCheck > 0 && (
+                              <p className="text-[11px] font-normal text-amber-600">
+                                {formatNumber(row.itemsBelowCheck)} item(s) below check level
+                              </p>
+                            )}
+                          </td>
                           <td className="text-right tabular-nums">{formatNumber(row.items)}</td>
                           <td className="text-right tabular-nums">{formatNumber(row.stockQty)}</td>
+                          <td className="text-right tabular-nums">
+                            {row.checkLevel != null
+                              ? <span className={row.belowCheckLevel ? 'font-semibold text-amber-700' : ''}>{formatNumber(row.checkLevel)}</span>
+                              : <span className="text-slate-300">—</span>}
+                          </td>
                           <td className="text-right tabular-nums">{formatNumber(row.orders)}</td>
                           <td className="text-right tabular-nums font-medium text-slate-800">{formatNumber(row.qty)}</td>
                           <td className="text-right tabular-nums">{formatNumber(row.sellQty)}</td>
@@ -732,11 +923,12 @@ const Consolidation = () => {
                         <td className="font-semibold text-slate-800">Total</td>
                         <td className="text-right font-semibold tabular-nums text-slate-800">{formatNumber(categoryTotals.items)}</td>
                         <td className="text-right font-semibold tabular-nums text-slate-800">{formatNumber(categoryTotals.stockQty)}</td>
+                        <td className="text-right text-slate-300">—</td>
                         <td
                           className="text-right font-semibold tabular-nums text-slate-800"
                           title="Distinct matched orders — one order can span several categories, so this is not the column sum"
                         >
-                          {formatNumber(summary.orders)}
+                          {formatNumber(checkFilter ? categoryTotals.orders : (categorySource?.summary?.orders ?? 0))}
                         </td>
                         <td className="text-right font-semibold tabular-nums text-slate-800">{formatNumber(categoryTotals.qty)}</td>
                         <td className="text-right font-semibold tabular-nums text-slate-800">{formatNumber(categoryTotals.sellQty)}</td>
@@ -767,10 +959,18 @@ const Consolidation = () => {
               </p>
             ) : (
               itemBreakdown.map((row) => (
-                <div key={row.itemId || row.name} className="px-4 py-3">
+                <div
+                  key={row.itemId || row.name}
+                  className={`px-4 py-3 ${row.belowCheckLevel ? 'bg-amber-50/60' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-800">{row.name}</p>
+                      <p className="text-sm font-medium text-slate-800">
+                        {row.name}
+                        {row.belowCheckLevel && (
+                          <AlertTriangle className="ml-1 inline h-3.5 w-3.5 text-amber-500" />
+                        )}
+                      </p>
                       <p className="text-xs text-slate-500">{row.category || '—'}</p>
                     </div>
                     <p className="shrink-0 text-sm font-medium text-slate-800 tabular-nums">
@@ -780,6 +980,10 @@ const Consolidation = () => {
                   <p className="mt-1 text-xs text-slate-500 tabular-nums">
                     {formatNumber(row.orders)} {row.orders === 1 ? 'order' : 'orders'} · Qty{' '}
                     {formatNumber(row.qty)} · {formatCurrency(row.price)}/unit
+                  </p>
+                  <p className="text-xs text-slate-500 tabular-nums">
+                    Stock {formatNumber(row.stockQty)}
+                    {row.checkLevel != null && ` · Check ${formatNumber(row.checkLevel)}`}
                   </p>
                 </div>
               ))
@@ -794,6 +998,8 @@ const Consolidation = () => {
                   <th>Category</th>
                   <th className="text-right">Orders</th>
                   <th className="text-right">Total Qty</th>
+                  <th className="text-right">Stock</th>
+                  <th className="text-right">Check Level</th>
                   <th className="text-right">Rate</th>
                   <th className="text-right">Est. Value</th>
                 </tr>
@@ -801,17 +1007,32 @@ const Consolidation = () => {
               <tbody>
                 {itemBreakdown.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-slate-400">
+                    <td colSpan={8} className="py-10 text-center text-slate-400">
                       No orders match the current filters
                     </td>
                   </tr>
                 ) : (
                   itemBreakdown.map((row) => (
-                    <tr key={row.itemId || row.name}>
-                      <td className="font-medium text-slate-800">{row.name}</td>
+                    <tr key={row.itemId || row.name} className={row.belowCheckLevel ? 'bg-amber-50/60' : ''}>
+                      <td className="font-medium text-slate-800">
+                        <span className="inline-flex items-center gap-1.5">
+                          {row.name}
+                          {row.belowCheckLevel && (
+                            <span className="srf-badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200">
+                              <AlertTriangle className="h-3 w-3" /> low
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td>{row.category || '—'}</td>
                       <td className="text-right tabular-nums">{formatNumber(row.orders)}</td>
                       <td className="text-right tabular-nums">{formatNumber(row.qty)}</td>
+                      <td className="text-right tabular-nums">{formatNumber(row.stockQty)}</td>
+                      <td className="text-right tabular-nums">
+                        {row.checkLevel != null
+                          ? <span className={row.belowCheckLevel ? 'font-semibold text-amber-700' : ''}>{formatNumber(row.checkLevel)}</span>
+                          : <span className="text-slate-300">—</span>}
+                      </td>
                       <td className="text-right tabular-nums">{formatCurrency(row.price)}</td>
                       <td className="text-right tabular-nums font-medium text-slate-800">{formatCurrency(row.value)}</td>
                     </tr>

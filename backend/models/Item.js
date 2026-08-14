@@ -22,6 +22,14 @@ const itemSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  // Safety stock line. Once quantity drops to or below it the item is flagged
+  // for reordering. Optional — when unset the item falls back to the check
+  // level of its category.
+  checkLevel: {
+    type: Number,
+    default: null,
+    min: [0, 'Check level cannot be negative']
+  },
   createdAt: {
     type: Date,
     default: Date.now

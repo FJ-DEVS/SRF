@@ -12,7 +12,8 @@ const emptyForm = {
   runBy: '',
   fromDate: '',
   toDate: '',
-  pointsAllocations: [{ item: '', points: '' }],
+  // Points are earned per unit sold of any item in the category
+  pointsAllocations: [{ category: '', points: '' }],
   tiers: [{ pointsRequired: '', reward: '' }],
 };
 
@@ -24,7 +25,7 @@ const formatDate = (value) =>
 
 const Schemas = () => {
   const [schemas, setSchemas] = useState([]);
-  const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -48,7 +49,7 @@ const Schemas = () => {
   }, [searchTerm, pageSize]);
 
   useEffect(() => {
-    fetchItems();
+    fetchCategories();
   }, []);
 
   const fetchSchemas = async () => {
@@ -68,12 +69,12 @@ const Schemas = () => {
     }
   };
 
-  const fetchItems = async () => {
+  const fetchCategories = async () => {
     try {
-      const response = await api.get('/items', { params: { limit: 1000 } });
-      if (response.data.success) setItems(response.data.data);
+      const response = await api.get('/categories');
+      if (response.data.success) setCategories(response.data.data);
     } catch (error) {
-      console.error('Error fetching items:', error);
+      console.error('Error fetching categories:', error);
     }
   };
 
@@ -98,7 +99,7 @@ const Schemas = () => {
   const addAllocation = () =>
     setFormData((prev) => ({
       ...prev,
-      pointsAllocations: [...prev.pointsAllocations, { item: '', points: '' }],
+      pointsAllocations: [...prev.pointsAllocations, { category: '', points: '' }],
     }));
   const removeAllocation = (index) =>
     setFormData((prev) => ({
@@ -123,17 +124,17 @@ const Schemas = () => {
     e.preventDefault();
 
     const allocations = formData.pointsAllocations
-      .filter((a) => a.item)
+      .filter((a) => a.category)
       .map((a) => {
-        const matched = items.find((it) => it._id === a.item);
-        return { item: a.item, itemName: matched ? matched.name : '', points: Number(a.points) || 0 };
+        const matched = categories.find((c) => c._id === a.category);
+        return { category: a.category, categoryName: matched ? matched.name : '', points: Number(a.points) || 0 };
       });
     const tiers = formData.tiers
       .filter((t) => (t.reward || '').trim())
       .map((t) => ({ pointsRequired: Number(t.pointsRequired) || 0, reward: t.reward.trim() }));
 
     if (allocations.length === 0) {
-      showAlert('Missing items', 'Add at least one item to the points table.', 'error');
+      showAlert('Missing categories', 'Add at least one category to the points table.', 'error');
       return;
     }
     if (tiers.length === 0) {
@@ -197,10 +198,10 @@ const Schemas = () => {
       pointsAllocations:
         schema.pointsAllocations?.length > 0
           ? schema.pointsAllocations.map((a) => ({
-              item: a.item?._id || a.item || '',
+              category: a.category?._id || a.category || '',
               points: a.points,
             }))
-          : [{ item: '', points: '' }],
+          : [{ category: '', points: '' }],
       tiers:
         schema.tiers?.length > 0
           ? schema.tiers.map((t) => ({ pointsRequired: t.pointsRequired, reward: t.reward }))
@@ -289,7 +290,7 @@ const Schemas = () => {
                     <th>Name</th>
                     <th>Period</th>
                     <th>Run By</th>
-                    <th>Items</th>
+                    <th>Categories</th>
                     <th>Tiers</th>
                     <th className="text-right">Actions</th>
                   </tr>
@@ -320,7 +321,7 @@ const Schemas = () => {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">{schema.name}</p>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      {formatDate(schema.fromDate)} – {formatDate(schema.toDate)} · {schema.pointsAllocations?.length || 0} items · {schema.tiers?.length || 0} tiers
+                      {formatDate(schema.fromDate)} – {formatDate(schema.toDate)} · {schema.pointsAllocations?.length || 0} categories · {schema.tiers?.length || 0} tiers
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -407,20 +408,23 @@ const Schemas = () => {
                     Points Allocation
                   </label>
                   <button type="button" onClick={addAllocation} className="srf-btn srf-btn-secondary !py-1 !px-2.5 text-xs">
-                    <Plus className="h-3.5 w-3.5" /> Add Item
+                    <Plus className="h-3.5 w-3.5" /> Add Category
                   </button>
                 </div>
+                <p className="mb-2 text-[11px] text-slate-400">
+                  Points are earned per unit sold of any item in the category.
+                </p>
                 <div className="space-y-2">
                   {formData.pointsAllocations.map((row, index) => (
                     <div key={index} className="flex items-center gap-2">
                       <select
-                        value={row.item}
-                        onChange={(e) => updateAllocation(index, 'item', e.target.value)}
+                        value={row.category}
+                        onChange={(e) => updateAllocation(index, 'category', e.target.value)}
                         className="w-full flex-1"
                       >
-                        <option value="">Select item…</option>
-                        {items.map((it) => (
-                          <option key={it._id} value={it._id}>{it.name}</option>
+                        <option value="">Select category…</option>
+                        {categories.map((cat) => (
+                          <option key={cat._id} value={cat._id}>{cat.name}</option>
                         ))}
                       </select>
                       <input
