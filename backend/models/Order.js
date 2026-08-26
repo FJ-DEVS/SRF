@@ -1,9 +1,14 @@
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
+  // The document id this order carried in the Firestore export. Unique so a
+  // re-run of migrate.js can never insert the same order twice; sparse so
+  // orders created inside the app (which have none) are simply not indexed.
   firestoreId: {
     type: String,
+    default: undefined,
     index: true,
+    unique: true,
     sparse: true
   },
   createdAt: {

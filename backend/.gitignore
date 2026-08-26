@@ -16,3 +16,5 @@ build/
 # System files
 .DS_Store
 Thumbs.db
+# Migration snapshots (mongo dumps taken by migrate.js --reset)
+backup/

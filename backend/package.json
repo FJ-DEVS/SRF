@@ -7,7 +7,11 @@
     "dev": "node --watch server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "check-migration": "node check-migration.js",
-    "migrate": "node migrate.js"
+    "migrate": "node migrate.js",
+    "migrate:dry": "node migrate.js --dry-run",
+    "migrate:reset": "node migrate.js --reset",
+    "find-duplicates": "node find-duplicates.js",
+    "restore-backup": "node restore-backup.js"
   },
   "keywords": [],
   "author": "",

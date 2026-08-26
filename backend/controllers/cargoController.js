@@ -1,11 +1,21 @@
 const Cargo = require('../models/Cargo');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
+const { exact, findDuplicate } = require('../utils/duplicateCheck');
+
+const duplicateNameMessage = (name) => `A cargo named "${String(name).trim()}" already exists`;
 
 // Create cargo
 exports.createCargo = async (req, res) => {
   try {
     const { name } = req.body;
+
+    if (name && String(name).trim()) {
+      const clash = await findDuplicate(Cargo, { name: exact(name) });
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicateNameMessage(name) });
+      }
+    }
 
     const cargo = new Cargo({ name });
     await cargo.save();
@@ -95,7 +105,14 @@ exports.getCargo = async (req, res) => {
 exports.updateCargo = async (req, res) => {
   try {
     const { name } = req.body;
-    
+
+    if (name !== undefined && String(name).trim()) {
+      const clash = await findDuplicate(Cargo, { name: exact(name) }, req.params.id);
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicateNameMessage(name) });
+      }
+    }
+
     const cargo = await Cargo.findByIdAndUpdate(
       req.params.id,
       { name },

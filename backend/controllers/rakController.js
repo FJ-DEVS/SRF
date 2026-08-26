@@ -7,6 +7,8 @@ const { usageByRak, freeSpace } = require('../utils/placementMath');
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Raks share a name on purpose — "VERTICAL - 0.8mm" is a shelf type spread
+// across A01..A07 — so the code is the only thing that has to be unique
 const duplicateCodeMessage = (code) => `Rak code "${code}" is already in use`;
 
 const parseCapacity = (value) => {

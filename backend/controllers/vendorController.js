@@ -1,11 +1,23 @@
 const Vendor = require('../models/Vendor');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
+const { exact, findDuplicate, isPlaceholderPhone } = require('../utils/duplicateCheck');
+
+const duplicatePhoneMessage = (phone) =>
+  `A vendor with phone number ${String(phone).trim()} already exists`;
 
 // Create vendor
 exports.createVendor = async (req, res) => {
   try {
     const { phone, name, gstin } = req.body;
+
+    // Phone number is the vendor's identity — two records sharing one is a duplicate
+    if (phone && !isPlaceholderPhone(phone)) {
+      const clash = await findDuplicate(Vendor, { phone: exact(phone) });
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicatePhoneMessage(phone) });
+      }
+    }
 
     const vendor = new Vendor({
       phone,
@@ -114,6 +126,13 @@ exports.updateVendor = async (req, res) => {
     if (name !== undefined) updateData.name = name;
     if (gstin !== undefined) updateData.gstin = gstin;
     if (isBlocked !== undefined) updateData.isBlocked = isBlocked;
+
+    if (phone !== undefined && phone && !isPlaceholderPhone(phone)) {
+      const clash = await findDuplicate(Vendor, { phone: exact(phone) }, req.params.id);
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicatePhoneMessage(phone) });
+      }
+    }
 
     const vendor = await Vendor.findByIdAndUpdate(
       req.params.id,

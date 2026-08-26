@@ -1,6 +1,7 @@
 const Salesman = require('../models/Salesman');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { exact, findDuplicate } = require('../utils/duplicateCheck');
 const { applySort } = require('../utils/listSort');
 const { getIO } = require('../socket');
 
@@ -73,8 +74,8 @@ exports.createSalesman = async (req, res) => {
   try {
     const { name, username, password, phone } = req.body;
 
-    // Check if username already exists
-    const existingSalesman = await Salesman.findOne({ username });
+    // Usernames are stored lowercase, so the lookup has to ignore case too
+    const existingSalesman = await findDuplicate(Salesman, { username: exact(username) });
     if (existingSalesman) {
       return res.status(400).json({ 
         success: false, 
@@ -103,6 +104,9 @@ exports.createSalesman = async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Username already exists' });
+    }
     console.error('Create salesman error:', error);
     res.status(500).json({ 
       success: false, 
@@ -193,6 +197,17 @@ exports.updateSalesman = async (req, res) => {
     if (name) updateData.name = name;
     if (username) updateData.username = username;
     if (phone) updateData.phone = phone;
+
+    if (username) {
+      const existingSalesman = await findDuplicate(
+        Salesman,
+        { username: exact(username) },
+        req.params.id
+      );
+      if (existingSalesman) {
+        return res.status(400).json({ success: false, message: 'Username already exists' });
+      }
+    }
     if (password) {
       const salt = await bcrypt.genSalt(10);
       updateData.password = await bcrypt.hash(password, salt);
@@ -219,6 +234,9 @@ exports.updateSalesman = async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Username already exists' });
+    }
     console.error('Update salesman error:', error);
     res.status(500).json({ 
       success: false, 

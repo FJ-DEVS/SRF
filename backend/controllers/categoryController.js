@@ -1,6 +1,7 @@
 const Category = require('../models/Category');
 const Item = require('../models/Item');
 const Schema = require('../models/Schema');
+const { exact, findDuplicate } = require('../utils/duplicateCheck');
 
 // Blank / missing check level means "not tracked"
 const parseCheckLevel = (value) => {
@@ -19,7 +20,7 @@ exports.createCategory = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Category name is required' });
     }
 
-    const existing = await Category.findOne({ name: name.trim() });
+    const existing = await findDuplicate(Category, { name: exact(name) });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Category already exists' });
     }
@@ -32,6 +33,9 @@ exports.createCategory = async (req, res) => {
 
     res.status(201).json({ success: true, message: 'Category created successfully', data: category });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Category already exists' });
+    }
     console.error('Create category error:', error);
     res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
@@ -77,7 +81,7 @@ exports.updateCategory = async (req, res) => {
       return res.status(200).json({ success: true, message: 'Category updated', data: category });
     }
 
-    const existing = await Category.findOne({ name: newName, _id: { $ne: category._id } });
+    const existing = await findDuplicate(Category, { name: exact(newName) }, category._id);
     if (existing) {
       return res.status(400).json({ success: false, message: 'Category already exists' });
     }
@@ -102,6 +106,9 @@ exports.updateCategory = async (req, res) => {
       data: category
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Category already exists' });
+    }
     console.error('Update category error:', error);
     res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }

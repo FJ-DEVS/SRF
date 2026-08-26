@@ -1,6 +1,10 @@
 const Customer = require('../models/Customer');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
+const { exact, findDuplicate, isPlaceholderPhone } = require('../utils/duplicateCheck');
+
+const duplicatePhoneMessage = (phone) =>
+  `A customer with phone number ${String(phone).trim()} already exists`;
 
 // The GST certificate is uploaded separately (POST /api/uploads), so what
 // arrives here is just the stored file descriptor — keep only our own fields
@@ -14,6 +18,14 @@ const normaliseCertificate = (cert) => ({
 exports.createCustomer = async (req, res) => {
   try {
     const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink } = req.body;
+
+    // Phone number is the customer's identity — two records sharing one is a duplicate
+    if (phone && !isPlaceholderPhone(phone)) {
+      const clash = await findDuplicate(Customer, { phone: exact(phone) });
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicatePhoneMessage(phone) });
+      }
+    }
 
     const customer = new Customer({
       phone,
@@ -139,6 +151,13 @@ exports.updateCustomer = async (req, res) => {
     if (assignedSalesman !== undefined) updateData.assignedSalesman = assignedSalesman || null;
     if (gstCertificate !== undefined) updateData.gstCertificate = normaliseCertificate(gstCertificate);
     if (locationLink !== undefined) updateData.locationLink = (locationLink || '').trim();
+
+    if (phone !== undefined && phone && !isPlaceholderPhone(phone)) {
+      const clash = await findDuplicate(Customer, { phone: exact(phone) }, req.params.id);
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicatePhoneMessage(phone) });
+      }
+    }
 
     const customer = await Customer.findByIdAndUpdate(
       req.params.id,

@@ -1,6 +1,7 @@
 const Roller = require('../models/Roller');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { exact, findDuplicate } = require('../utils/duplicateCheck');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
 
@@ -83,7 +84,7 @@ exports.createRoller = async (req, res) => {
       });
     }
 
-    const existingRoller = await Roller.findOne({ username: String(username).toLowerCase().trim() });
+    const existingRoller = await findDuplicate(Roller, { username: exact(username) });
     if (existingRoller) {
       return res.status(400).json({
         success: false,
@@ -111,6 +112,9 @@ exports.createRoller = async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Username already exists' });
+    }
     console.error('Create roller error:', error);
     res.status(500).json({
       success: false,
@@ -201,6 +205,17 @@ exports.updateRoller = async (req, res) => {
     if (name !== undefined) updateData.name = name;
     if (username) updateData.username = username;
     if (phone !== undefined) updateData.phone = phone;
+
+    if (username) {
+      const existingRoller = await findDuplicate(
+        Roller,
+        { username: exact(username) },
+        req.params.id
+      );
+      if (existingRoller) {
+        return res.status(400).json({ success: false, message: 'Username already exists' });
+      }
+    }
     if (password) {
       const salt = await bcrypt.genSalt(10);
       updateData.password = await bcrypt.hash(password, salt);
