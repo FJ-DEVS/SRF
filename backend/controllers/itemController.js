@@ -5,6 +5,9 @@ const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
 const { parseCheckLevel, categoryCheckLevels, decorateCheckLevel, belowCheckLevelQuery } =
   require('../utils/checkLevel');
+const {
+  findDuplicate, itemDuplicateQuery, itemDuplicateKey, itemIdentityUnchanged, itemDuplicateMessage
+} = require('../utils/duplicateCheck');
 
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -13,6 +16,17 @@ const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 exports.createItem = async (req, res) => {
   try {
     const { name, price, quantity, category, checkLevel } = req.body;
+
+    // Same name inside the same category is the same item
+    if (name && String(name).trim()) {
+      const clash = await findDuplicate(Item, itemDuplicateQuery(name, category));
+      if (clash) {
+        return res.status(400).json({
+          success: false,
+          message: itemDuplicateMessage(name, category)
+        });
+      }
+    }
 
     const item = new Item({
       name,
@@ -137,6 +151,36 @@ exports.updateItem = async (req, res) => {
     if (category !== undefined) updateData.category = category;
     const parsedCheckLevel = parseCheckLevel(checkLevel);
     if (parsedCheckLevel !== undefined) updateData.checkLevel = parsedCheckLevel;
+
+    // A rename or a category move must not land on an item that already exists
+    if (updateData.name !== undefined || updateData.category !== undefined) {
+      const current = await Item.findById(req.params.id);
+      if (!current) {
+        return res.status(404).json({
+          success: false,
+          message: 'Item not found'
+        });
+      }
+
+      const nextName = updateData.name !== undefined ? updateData.name : current.name;
+      const nextCategory =
+        updateData.category !== undefined ? updateData.category : current.category;
+
+      // Re-sending the same name/category is a price or stock edit, not a rename
+      if (!itemIdentityUnchanged(nextName, nextCategory, current)) {
+        const clash = await findDuplicate(
+          Item,
+          itemDuplicateQuery(nextName, nextCategory),
+          current._id
+        );
+        if (clash) {
+          return res.status(400).json({
+            success: false,
+            message: itemDuplicateMessage(nextName, nextCategory)
+          });
+        }
+      }
+    }
 
     const item = await Item.findByIdAndUpdate(
       req.params.id,
@@ -360,6 +404,24 @@ exports.bulkImportItems = async (req, res) => {
     let created = 0;
     let updated = 0;
     const errors = [];
+    // Rows of one file can also clash with each other, not just with the database
+    const seen = new Set();
+
+    // Records the name/category a row is taking, or reports why it cannot
+    const claimName = async (name, category, rowLabel, excludeId = null) => {
+      const key = itemDuplicateKey(name, category);
+      if (seen.has(key)) {
+        errors.push(`${rowLabel}: duplicate of an earlier row in this file`);
+        return false;
+      }
+      const clash = await findDuplicate(Item, itemDuplicateQuery(name, category), excludeId);
+      if (clash) {
+        errors.push(`${rowLabel}: ${itemDuplicateMessage(name, category)}`);
+        return false;
+      }
+      seen.add(key);
+      return true;
+    };
 
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
@@ -370,6 +432,12 @@ exports.bulkImportItems = async (req, res) => {
 
       try {
         if (row._id) {
+          const current = await Item.findById(row._id);
+          if (!current) {
+            errors.push(`${rowLabel}: no item found for ID ${row._id}`);
+            continue;
+          }
+
           const updateData = {};
           if (row.name !== undefined && String(row.name).trim() !== '') updateData.name = String(row.name).trim();
           if (price !== undefined && !isNaN(price)) updateData.price = price;
@@ -377,22 +445,34 @@ exports.bulkImportItems = async (req, res) => {
           if (row.category !== undefined) updateData.category = String(row.category).trim();
           if (checkLevel !== undefined) updateData.checkLevel = checkLevel;
 
-          const item = await Item.findByIdAndUpdate(row._id, updateData, { new: true, runValidators: true });
-          if (!item) {
-            errors.push(`${rowLabel}: no item found for ID ${row._id}`);
-            continue;
-          }
+          const nextName = updateData.name !== undefined ? updateData.name : current.name;
+          const nextCategory =
+            updateData.category !== undefined ? updateData.category : current.category;
+
+          // Rows that keep their name and category are just price/stock edits
+          if (
+            !itemIdentityUnchanged(nextName, nextCategory, current) &&
+            !(await claimName(nextName, nextCategory, rowLabel, current._id))
+          ) continue;
+
+          await Item.findByIdAndUpdate(row._id, updateData, { new: true, runValidators: true });
           updated++;
         } else {
           if (!row.name || !String(row.name).trim()) {
             errors.push(`${rowLabel}: name is required`);
             continue;
           }
+
+          const name = String(row.name).trim();
+          const category = row.category ? String(row.category).trim() : '';
+
+          if (!(await claimName(name, category, rowLabel))) continue;
+
           const item = new Item({
-            name: String(row.name).trim(),
+            name,
             price,
             quantity,
-            category: row.category ? String(row.category).trim() : '',
+            category,
             checkLevel: checkLevel ?? null
           });
           await item.save();

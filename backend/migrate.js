@@ -1,517 +1,646 @@
+// Firestore export -> MongoDB migration.
+//
+//   node migrate.js --dry-run    report what would happen, write nothing
+//   node migrate.js              migrate; safe to re-run, never duplicates
+//   node migrate.js --reset      back up + wipe items/customers/vendors/orders/
+//                                placements first, then migrate from scratch
+//   --placeholder-items          also create the 20 item names that only orders
+//                                mention (price 0, stock 0) so the 36 orders
+//                                using them migrate instead of being skipped
+//
+// Identity keys (the same ones utils/duplicateCheck.js enforces on the admin
+// screens, so a migrated row and a hand-typed one clash the same way):
+//
+//   item      name + category, trimmed and case-insensitive
+//   contact   name — phone is NOT an identity here: six numbers in the export
+//             are shared by thirty different shops, and keying on phone drops
+//             24 real customers
+//   order     firestoreId — the export's own document id, unique across all
+//             2,833 rows, so re-running can never double-insert
+require('dotenv').config();
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 
-// Import models
 const Item = require('./models/Item');
 const Order = require('./models/Order');
 const Customer = require('./models/Customer');
 const Vendor = require('./models/Vendor');
+const Category = require('./models/Category');
+const Salesman = require('./models/Salesman');
 
-// Statistics tracking
+const RESET = process.argv.includes('--reset');
+const DRY_RUN = process.argv.includes('--dry-run');
+// A real --reset empties the collections before anything is read back, so the
+// dry run has to pretend they are empty too — otherwise it reports against
+// rows that would no longer be there.
+const ASSUME_EMPTY = RESET && DRY_RUN;
+// Twenty item names appear in orders.json but not in items.json. Off by
+// default: an item with no price and no stock is worse than a missing order.
+const PLACEHOLDER_ITEMS = process.argv.includes('--placeholder-items');
+
+const EXPORT_DIR = path.join(__dirname, '../firestore-export/exports');
+const BACKUP_ROOT = path.join(__dirname, 'backup');
+
+// Collections this script owns. Placements are included because every one of
+// them points at an item; wiping items without them leaves dangling rows.
+const OWNED = ['items', 'customers', 'vendors', 'orders', 'placements'];
+
+// Referenced by orders but absent from contacts.json — created as customers so
+// those 48 orders keep a link instead of showing a blank buyer.
+const MISSING_CONTACTS = [
+  'Fabco Glass House - Alappuzha',
+  'Sree Kailasam Traders - Kollam',
+  'New Luxmat Glass - Mannarkad, Alappuzha',
+  'Madeena Glass & Plywood - Kishattur, MLPRM'
+];
+const PLACEHOLDER_PHONE = '0000000000';
+
+const ORDER_TYPES = {
+  'OrderType.purchase': 'purchase order',
+  'OrderType.sell': 'sell order'
+};
+
+const ORDER_STATUSES = {
+  'OrderStatus.pending': 'pending',
+  'OrderStatus.toRoll': 'to roll',
+  'OrderStatus.rolled': 'rolled',
+  'OrderStatus.billed': 'billed',
+  'OrderStatus.delivered': 'delivered',
+  'OrderStatus.completed': 'delivered',
+  'OrderStatus.cancelled': 'cancelled'
+};
+
+// ---------------------------------------------------------------- helpers
+
+// Lookup key: trimmed, inner runs of whitespace collapsed, lower-cased.
+// "3011 SHG  - 0.8mm" and "3011 SHG - 0.8mm" are the same item.
+const norm = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// Looser key, used only to carry app-only fields (assigned salesman, check
+// level) across the wipe. Never used to decide identity.
+const fuzz = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const escapeRegex = (str = '') => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const readJson = (file) => JSON.parse(fs.readFileSync(path.join(EXPORT_DIR, file), 'utf8'));
+
+// Firestore writes "2025-11-06T15:31:27.485289" with no zone; Date reads it as
+// local time, which is what the old system displayed.
+const parseDate = (value) => {
+  const date = new Date(value ?? '');
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+};
+
+const nonNegative = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+};
+
 const stats = {
-  items: { total: 0, success: 0, failed: 0, skipped: 0 },
-  orders: { total: 0, success: 0, failed: 0, skipped: 0 },
-  customers: { total: 0, success: 0, failed: 0, skipped: 0 },
-  vendors: { total: 0, success: 0, failed: 0, skipped: 0 }
+  items: { read: 0, inserted: 0, existing: 0, failed: 0 },
+  customers: { read: 0, inserted: 0, existing: 0, failed: 0, invented: 0 },
+  vendors: { read: 0, inserted: 0, existing: 0, failed: 0 },
+  placeholders: { created: 0 },
+  orders: { read: 0, inserted: 0, existing: 0, failed: 0, skippedUnknownItem: 0, skippedBadType: 0, droppedLines: 0, linkedSalesman: 0 }
 };
+const notes = { itemNameCollisions: [], contactNameCollisions: [], unknownItemNames: new Set(), errors: [] };
 
-const errors = {
-  items: [],
-  orders: [],
-  customers: [],
-  vendors: []
-};
+// name -> _id, and name -> { id, model } for contacts
+const itemIds = new Map();
+const contactIds = new Map();
 
-// Mapping storage
-const itemNameToId = new Map();
-const contactNameToId = new Map();
+// ------------------------------------------------------------ backup/wipe
 
-// Helper function to read JSON file
-function readJsonFile(filePath) {
-  try {
-    const data = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error(`Error reading file ${filePath}:`, error.message);
-    throw error;
-  }
-}
+// Everything the export cannot give back: the category work already done on
+// items, check levels, and the customer fields the admin screens fill in.
+const capturePreserved = async (db) => {
+  const items = await db.collection('items')
+    .find({}, { projection: { name: 1, category: 1, checkLevel: 1 } }).toArray();
+  const customers = await db.collection('customers')
+    .find({}, { projection: { name: 1, paymentRating: 1, assignedSalesman: 1, gstCertificate: 1, locationLink: 1 } }).toArray();
 
-// Helper function to parse Firestore timestamp
-function parseFirestoreDate(dateString) {
-  if (!dateString) return new Date();
-  try {
-    return new Date(dateString);
-  } catch (error) {
-    return new Date();
-  }
-}
-
-// Migrate Items
-async function migrateItems() {
-  console.log('\n=== Starting Items Migration ===');
-  const itemsPath = path.join(__dirname, '../firestore-export/exports/items.json');
-  const itemsData = readJsonFile(itemsPath);
-  
-  stats.items.total = itemsData.length;
-  console.log(`Found ${itemsData.length} items to migrate`);
-  
-  for (const itemData of itemsData) {
-    try {
-      // Check if item already exists
-      const existingItem = await Item.findOne({ name: itemData.name, rakNo: itemData.rakNo || 'N/A' });
-      if (existingItem) {
-        console.log(`⚠️  Item "${itemData.name}" already exists, skipping`);
-        stats.items.skipped++;
-        itemNameToId.set(itemData.name, existingItem._id);
-        continue;
+  const pack = (rows, fields) => {
+    const byName = {};
+    for (const row of rows) {
+      const kept = {};
+      for (const field of fields) {
+        const value = row[field];
+        if (value === undefined || value === null || value === '') continue;
+        kept[field] = field === 'assignedSalesman' ? String(value) : value;
       }
-
-      // Skip items with negative prices (quantity 0 is valid - stock pending restock)
-      if (itemData.price < 0) {
-        console.log(`⚠️  Skipping item "${itemData.name}" (price: ${itemData.price})`);
-        stats.items.skipped++;
-        continue;
-      }
-
-      const item = new Item({
-        name: itemData.name,
-        rakNo: itemData.rakNo || 'N/A',
-        price: itemData.price,
-        quantity: Math.max(itemData.quantity, 0),
-        createdAt: new Date()
-      });
-
-      const savedItem = await item.save();
-      itemNameToId.set(itemData.name, savedItem._id);
-      stats.items.success++;
-      
-      if (stats.items.success % 100 === 0) {
-        console.log(`✓ Migrated ${stats.items.success} items...`);
-      }
-    } catch (error) {
-      stats.items.failed++;
-      errors.items.push({
-        item: itemData.name,
-        error: error.message
-      });
-      console.error(`✗ Failed to migrate item "${itemData.name}":`, error.message);
+      if (Object.keys(kept).length) byName[norm(row.name)] = kept;
     }
-  }
-  
-  console.log(`\n✓ Items Migration Complete:`);
-  console.log(`  Total: ${stats.items.total}`);
-  console.log(`  Success: ${stats.items.success}`);
-  console.log(`  Skipped: ${stats.items.skipped}`);
-  console.log(`  Failed: ${stats.items.failed}`);
-}
-
-// Migrate Contacts (Customers and Vendors)
-async function migrateContacts() {
-  console.log('\n=== Starting Contacts Migration ===');
-  const contactsPath = path.join(__dirname, '../firestore-export/exports/contacts.json');
-  const contactsData = readJsonFile(contactsPath);
-  
-  console.log(`Found ${contactsData.length} contacts to migrate`);
-  
-  for (const contactData of contactsData) {
-    try {
-      const contactType = contactData.type;
-      const contactInfo = {
-        phone: contactData.phone,
-        name: contactData.name,
-        gstin: contactData.gstin || '',
-        isBlocked: contactData.isBlocked || false,
-        createdAt: parseFirestoreDate(contactData.createdAt)
-      };
-
-      if (contactType === 'ContactType.customer') {
-        // Check if customer already exists
-        const existingCustomer = await Customer.findOne({ phone: contactData.phone });
-        if (existingCustomer) {
-          console.log(`⚠️  Customer "${contactData.name}" already exists, skipping`);
-          stats.customers.skipped++;
-          contactNameToId.set(contactData.name, { id: existingCustomer._id, type: 'customer' });
-          continue;
-        }
-
-        const customer = new Customer(contactInfo);
-        const savedCustomer = await customer.save();
-        contactNameToId.set(contactData.name, { id: savedCustomer._id, type: 'customer' });
-        stats.customers.total++;
-        stats.customers.success++;
-        
-        if (stats.customers.success % 50 === 0) {
-          console.log(`✓ Migrated ${stats.customers.success} customers...`);
-        }
-      } else if (contactType === 'ContactType.vendor') {
-        // Check if vendor already exists
-        const existingVendor = await Vendor.findOne({ phone: contactData.phone });
-        if (existingVendor) {
-          console.log(`⚠️  Vendor "${contactData.name}" already exists, skipping`);
-          stats.vendors.skipped++;
-          contactNameToId.set(contactData.name, { id: existingVendor._id, type: 'vendor' });
-          continue;
-        }
-
-        const vendor = new Vendor(contactInfo);
-        const savedVendor = await vendor.save();
-        contactNameToId.set(contactData.name, { id: savedVendor._id, type: 'vendor' });
-        stats.vendors.total++;
-        stats.vendors.success++;
-        
-        if (stats.vendors.success % 50 === 0) {
-          console.log(`✓ Migrated ${stats.vendors.success} vendors...`);
-        }
-      } else {
-        console.log(`⚠️  Unknown contact type "${contactType}" for "${contactData.name}"`);
-      }
-    } catch (error) {
-      if (contactData.type === 'ContactType.customer') {
-        stats.customers.failed++;
-        errors.customers.push({
-          contact: contactData.name,
-          error: error.message
-        });
-      } else {
-        stats.vendors.failed++;
-        errors.vendors.push({
-          contact: contactData.name,
-          error: error.message
-        });
-      }
-      console.error(`✗ Failed to migrate contact "${contactData.name}":`, error.message);
-    }
-  }
-  
-  console.log(`\n✓ Contacts Migration Complete:`);
-  console.log(`  Customers - Total: ${stats.customers.total}, Success: ${stats.customers.success}, Skipped: ${stats.customers.skipped}, Failed: ${stats.customers.failed}`);
-  console.log(`  Vendors - Total: ${stats.vendors.total}, Success: ${stats.vendors.success}, Skipped: ${stats.vendors.skipped}, Failed: ${stats.vendors.failed}`);
-}
-
-// Migrate Orders
-async function migrateOrders() {
-  console.log('\n=== Starting Orders Migration ===');
-  const ordersPath = path.join(__dirname, '../firestore-export/exports/orders.json');
-  const ordersData = readJsonFile(ordersPath);
-  
-  stats.orders.total = ordersData.length;
-  console.log(`Found ${ordersData.length} orders to migrate`);
-
-  let orphanedOrders = 0;
-  let missingItems = 0;
-
-  // Build lookup sets to detect orders already migrated in previous runs.
-  // Older records (migrated before firestoreId existed) are matched by a
-  // content signature instead.
-  const existingOrders = await Order.find({}, 'firestoreId createdAt createdBy type customerName items').lean();
-  const existingFirestoreIds = new Set();
-  const existingSignatures = new Set();
-
-  const buildSignature = (createdAt, createdBy, type, customerName, items) => {
-    const itemsKey = items.map(i => `${i.item}:${i.quantity}`).sort().join(',');
-    return [
-      new Date(createdAt).toISOString(),
-      String(createdBy),
-      type,
-      customerName ? String(customerName) : '',
-      itemsKey
-    ].join('|');
+    return byName;
   };
 
-  for (const existing of existingOrders) {
-    if (existing.firestoreId) {
-      existingFirestoreIds.add(existing.firestoreId);
-    } else {
-      existingSignatures.add(buildSignature(
-        existing.createdAt,
-        existing.createdBy,
-        existing.type,
-        existing.customerName,
-        existing.items || []
-      ));
+  return {
+    items: pack(items, ['category', 'checkLevel']),
+    customers: pack(customers, ['paymentRating', 'assignedSalesman', 'gstCertificate', 'locationLink'])
+  };
+};
+
+const backupAndWipe = async (db) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dir = path.join(BACKUP_ROOT, stamp);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const counts = {};
+  for (const name of OWNED) {
+    const rows = await db.collection(name).find({}).toArray();
+    fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(rows, null, 2));
+    counts[name] = rows.length;
+  }
+
+  const preserved = await capturePreserved(db);
+  fs.writeFileSync(path.join(dir, 'preserved.json'), JSON.stringify(preserved, null, 2));
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ takenAt: stamp, counts }, null, 2));
+
+  console.log(`\nBackup written to backup/${stamp}`);
+  for (const name of OWNED) console.log(`  ${name.padEnd(12)} ${counts[name]}`);
+
+  if (DRY_RUN) {
+    console.log('\n[dry run] would now wipe those collections — nothing deleted');
+    return preserved;
+  }
+
+  console.log('\nWiping...');
+  for (const name of OWNED) {
+    const result = await db.collection(name).deleteMany({});
+    console.log(`  ${name.padEnd(12)} ${result.deletedCount} removed`);
+  }
+  return preserved;
+};
+
+// Most recent backup, so a plain `node migrate.js` after a `--reset` run still
+// finds the preserved fields.
+const readLatestPreserved = () => {
+  if (!fs.existsSync(BACKUP_ROOT)) return { items: {}, customers: {} };
+  const dirs = fs.readdirSync(BACKUP_ROOT)
+    .filter((d) => fs.existsSync(path.join(BACKUP_ROOT, d, 'preserved.json')))
+    .sort();
+  if (!dirs.length) return { items: {}, customers: {} };
+  return JSON.parse(fs.readFileSync(path.join(BACKUP_ROOT, dirs[dirs.length - 1], 'preserved.json'), 'utf8'));
+};
+
+// Exact key first, then the looser one — but only when it is unambiguous, so
+// two old rows collapsing to the same fuzzy key never pick a winner at random.
+const preservedLookup = (table) => {
+  const fuzzy = new Map();
+  for (const key of Object.keys(table)) {
+    const f = fuzz(key);
+    if (fuzzy.has(f)) fuzzy.set(f, null);
+    else fuzzy.set(f, table[key]);
+  }
+  return (name) => table[norm(name)] || fuzzy.get(fuzz(name)) || null;
+};
+
+// ------------------------------------------------------------------ items
+
+// Categories are carried in the item name ("3008 SHG - 0.8mm"). Longest first
+// so "1.25mm PVC Laminate" wins over "1mm", and "1mm" never matches inside
+// "0.71mm" or "11mm".
+const buildCategoryMatchers = async () => {
+  const categories = await Category.find().select('name').lean();
+  return categories
+    .map((c) => {
+      const pattern = escapeRegex(c.name)
+        .replace(/\s+/g, '\\s+')
+        .replace(/(\d)(?=[a-zA-Z])/g, '$1\\s*');
+      return { name: c.name, regex: new RegExp(`(?<![\\d.])${pattern}(?!\\d)`, 'i') };
+    })
+    .sort((a, b) => b.name.length - a.name.length);
+};
+
+const migrateItems = async (preserved) => {
+  console.log('\n=== Items ===');
+  const rows = readJson('items.json');
+  stats.items.read = rows.length;
+
+  const matchers = await buildCategoryMatchers();
+  const lookupPreserved = preservedLookup(preserved.items);
+
+  if (!ASSUME_EMPTY) {
+    for (const existing of await Item.find().select('name category').lean()) {
+      itemIds.set(norm(existing.name), existing._id);
     }
   }
 
-  // Create placeholder items for names referenced by orders but absent from items.json
-  const missingItemNames = new Set();
-  for (const orderData of ordersData) {
-    for (const item of orderData.items || []) {
-      if (!itemNameToId.has(item.itemName)) {
-        missingItemNames.add(item.itemName);
-      }
+  const seen = new Map();
+  for (const row of rows) {
+    const name = String(row.name ?? '').trim();
+    if (!name) {
+      stats.items.failed++;
+      notes.errors.push(`item ${row._id}: blank name`);
+      continue;
     }
-  }
 
-  if (missingItemNames.size > 0) {
-    console.log(`\n⚠️  Creating ${missingItemNames.size} placeholder item(s) for names referenced by orders but missing from items.json`);
-    for (const name of missingItemNames) {
-      const existingItem = await Item.findOne({ name, rakNo: 'N/A' });
-      if (existingItem) {
-        itemNameToId.set(name, existingItem._id);
-        continue;
-      }
-      const placeholder = new Item({
-        name,
-        rakNo: 'N/A',
-        price: 0,
-        quantity: 0,
-        createdAt: new Date()
-      });
-      const saved = await placeholder.save();
-      itemNameToId.set(name, saved._id);
-      stats.items.success++;
-      console.log(`  + Created placeholder item "${name}"`);
+    const key = norm(name);
+    if (seen.has(key)) {
+      notes.itemNameCollisions.push(`${seen.get(key)} / ${name}`);
+      stats.items.existing++;
+      continue;
     }
-  }
+    seen.set(key, name);
 
-  for (const orderData of ordersData) {
+    if (itemIds.has(key)) {
+      stats.items.existing++;
+      continue;
+    }
+
+    const kept = lookupPreserved(name) || {};
+    const category = kept.category
+      || (matchers.find((m) => m.regex.test(name)) || {}).name
+      || '';
+
+    if (DRY_RUN) {
+      stats.items.inserted++;
+      itemIds.set(key, new mongoose.Types.ObjectId());
+      continue;
+    }
+
     try {
-      // Skip orders already migrated in a previous run
-      if (orderData._id && existingFirestoreIds.has(orderData._id)) {
-        console.log(`⚠️  Order ${orderData._id} already exists, skipping`);
-        stats.orders.skipped++;
-        continue;
-      }
-
-      // Map order type
-      let orderType;
-      if (orderData.type === 'OrderType.purchase') {
-        orderType = 'purchase order';
-      } else if (orderData.type === 'OrderType.sell') {
-        orderType = 'sell order';
-      } else {
-        console.log(`⚠️  Unknown order type "${orderData.type}" for order ${orderData._id}`);
-        stats.orders.skipped++;
-        continue;
-      }
-
-      // Map order status
-      let orderStatus = 'pending';
-      if (orderData.status) {
-        const statusMap = {
-          'OrderStatus.pending': 'pending',
-          'OrderStatus.toRoll': 'to roll',
-          'OrderStatus.rolled': 'rolled',
-          'OrderStatus.billed': 'billed',
-          'OrderStatus.delivered': 'delivered',
-          'OrderStatus.completed': 'delivered' // Map completed to delivered
-        };
-        orderStatus = statusMap[orderData.status] || 'pending';
-      }
-
-      // Map items
-      const mappedItems = [];
-      let hasAllItems = true;
-      
-      for (const item of orderData.items || []) {
-        if (item.quantity < 1) {
-          console.log(`⚠️  Dropping zero/negative-quantity line "${item.itemName}" from order ${orderData._id}`);
-          continue;
-        }
-        const itemId = itemNameToId.get(item.itemName);
-        if (itemId) {
-          mappedItems.push({
-            item: itemId,
-            quantity: item.quantity
-          });
-        } else {
-          console.log(`⚠️  Item "${item.itemName}" not found in database for order ${orderData._id}`);
-          hasAllItems = false;
-          missingItems++;
-        }
-      }
-
-      if (!hasAllItems || mappedItems.length === 0) {
-        console.log(`⚠️  Skipping order ${orderData._id} due to missing items`);
-        stats.orders.skipped++;
-        continue;
-      }
-
-      // Map customer/vendor
-      let customerRef = null;
-      if (orderData.customerName) {
-        const contact = contactNameToId.get(orderData.customerName);
-        if (contact && contact.type === 'customer') {
-          customerRef = contact.id;
-        } else if (!contact) {
-          console.log(`⚠️  Customer/Vendor "${orderData.customerName}" not found for order ${orderData._id}`);
-          orphanedOrders++;
-          // We'll still create the order but without customer reference
-        }
-      }
-
-      const createdAt = parseFirestoreDate(orderData.createdAt);
-      const createdBy = orderData.createdBy || 'admin';
-
-      // Skip orders migrated before firestoreId tracking existed, matched by content
-      const signature = buildSignature(createdAt, createdBy, orderType, customerRef, mappedItems);
-      if (existingSignatures.has(signature)) {
-        console.log(`⚠️  Order ${orderData._id} matches an already-migrated order, skipping`);
-        stats.orders.skipped++;
-        continue;
-      }
-
-      // Create order
-      const order = new Order({
-        firestoreId: orderData._id,
-        createdAt,
-        createdBy,
-        createdByType: 'admin', // Default to admin since we don't have salesman references
-        type: orderType,
-        items: mappedItems,
-        customerName: customerRef,
-        status: orderStatus
+      const saved = await Item.create({
+        name,
+        price: nonNegative(row.price),
+        quantity: nonNegative(row.quantity),
+        category,
+        checkLevel: kept.checkLevel ?? null,
+        createdAt: parseDate(row.createdAt)
       });
-
-      await order.save();
-      existingFirestoreIds.add(orderData._id);
-      existingSignatures.add(signature);
-      stats.orders.success++;
-
-      if (stats.orders.success % 100 === 0) {
-        console.log(`✓ Migrated ${stats.orders.success} orders...`);
-      }
+      itemIds.set(key, saved._id);
+      stats.items.inserted++;
     } catch (error) {
-      stats.orders.failed++;
-      errors.orders.push({
-        order: orderData._id,
-        error: error.message
-      });
-      console.error(`✗ Failed to migrate order "${orderData._id}":`, error.message);
+      stats.items.failed++;
+      notes.errors.push(`item "${name}": ${error.message}`);
     }
   }
-  
-  console.log(`\n✓ Orders Migration Complete:`);
-  console.log(`  Total: ${stats.orders.total}`);
-  console.log(`  Success: ${stats.orders.success}`);
-  console.log(`  Skipped: ${stats.orders.skipped}`);
-  console.log(`  Failed: ${stats.orders.failed}`);
-  console.log(`  Orders with missing customer/vendor references: ${orphanedOrders}`);
-  console.log(`  Total missing item references: ${missingItems}`);
-}
 
-// Generate detailed report
-function generateReport() {
-  console.log('\n' + '='.repeat(60));
-  console.log('📊 MIGRATION SUMMARY REPORT');
-  console.log('='.repeat(60));
-  
-  console.log('\n📦 ITEMS:');
-  console.log(`  ✓ Successfully migrated: ${stats.items.success}`);
-  console.log(`  ⚠️  Skipped: ${stats.items.skipped}`);
-  console.log(`  ✗ Failed: ${stats.items.failed}`);
-  console.log(`  📝 Total processed: ${stats.items.total}`);
-  
-  console.log('\n👥 CUSTOMERS:');
-  console.log(`  ✓ Successfully migrated: ${stats.customers.success}`);
-  console.log(`  ⚠️  Skipped: ${stats.customers.skipped}`);
-  console.log(`  ✗ Failed: ${stats.customers.failed}`);
-  console.log(`  📝 Total processed: ${stats.customers.total}`);
-  
-  console.log('\n🏢 VENDORS:');
-  console.log(`  ✓ Successfully migrated: ${stats.vendors.success}`);
-  console.log(`  ⚠️  Skipped: ${stats.vendors.skipped}`);
-  console.log(`  ✗ Failed: ${stats.vendors.failed}`);
-  console.log(`  📝 Total processed: ${stats.vendors.total}`);
-  
-  console.log('\n📋 ORDERS:');
-  console.log(`  ✓ Successfully migrated: ${stats.orders.success}`);
-  console.log(`  ⚠️  Skipped: ${stats.orders.skipped}`);
-  console.log(`  ✗ Failed: ${stats.orders.failed}`);
-  console.log(`  📝 Total processed: ${stats.orders.total}`);
-  
-  console.log('\n' + '='.repeat(60));
-  
-  // Log errors if any
-  if (errors.items.length > 0 || errors.orders.length > 0 || 
-      errors.customers.length > 0 || errors.vendors.length > 0) {
-    console.log('\n⚠️  ERRORS ENCOUNTERED:');
-    
-    if (errors.items.length > 0) {
-      console.log(`\nItems (${errors.items.length} errors):`);
-      errors.items.slice(0, 10).forEach(err => {
-        console.log(`  - ${err.item}: ${err.error}`);
-      });
-      if (errors.items.length > 10) {
-        console.log(`  ... and ${errors.items.length - 10} more`);
-      }
+  console.log(`  read ${stats.items.read}  inserted ${stats.items.inserted}  skipped-as-duplicate ${stats.items.existing}  failed ${stats.items.failed}`);
+};
+
+// --------------------------------------------------------------- contacts
+
+const migrateContacts = async (preserved) => {
+  console.log('\n=== Contacts ===');
+  const rows = readJson('contacts.json');
+  const lookupPreserved = preservedLookup(preserved.customers);
+
+  if (!ASSUME_EMPTY) {
+    for (const existing of await Customer.find().select('name').lean()) {
+      contactIds.set(norm(existing.name), { id: existing._id, model: 'Customer' });
     }
-    
-    if (errors.customers.length > 0) {
-      console.log(`\nCustomers (${errors.customers.length} errors):`);
-      errors.customers.slice(0, 10).forEach(err => {
-        console.log(`  - ${err.contact}: ${err.error}`);
-      });
-      if (errors.customers.length > 10) {
-        console.log(`  ... and ${errors.customers.length - 10} more`);
-      }
-    }
-    
-    if (errors.vendors.length > 0) {
-      console.log(`\nVendors (${errors.vendors.length} errors):`);
-      errors.vendors.slice(0, 10).forEach(err => {
-        console.log(`  - ${err.contact}: ${err.error}`);
-      });
-      if (errors.vendors.length > 10) {
-        console.log(`  ... and ${errors.vendors.length - 10} more`);
-      }
-    }
-    
-    if (errors.orders.length > 0) {
-      console.log(`\nOrders (${errors.orders.length} errors):`);
-      errors.orders.slice(0, 10).forEach(err => {
-        console.log(`  - ${err.order}: ${err.error}`);
-      });
-      if (errors.orders.length > 10) {
-        console.log(`  ... and ${errors.orders.length - 10} more`);
-      }
+    for (const existing of await Vendor.find().select('name').lean()) {
+      contactIds.set(norm(existing.name), { id: existing._id, model: 'Vendor' });
     }
   }
-  
-  console.log('\n' + '='.repeat(60));
-  console.log('✅ Migration process completed!');
-  console.log('='.repeat(60) + '\n');
-}
 
-// Main migration function
-async function runMigration() {
-  try {
-    console.log('🚀 Starting Firestore to MongoDB Migration');
-    console.log('='.repeat(60));
-    
-    // Connect to MongoDB
-    console.log('\n🔌 Connecting to MongoDB...');
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✓ Connected to MongoDB successfully');
-    
-    // Run migrations in order
-    await migrateItems();
-    await migrateContacts();
-    await migrateOrders();
-    
-    // Generate final report
-    generateReport();
-    
-    // Close connection
-    console.log('\n🔌 Closing MongoDB connection...');
-    await mongoose.connection.close();
-    console.log('✓ Connection closed');
-    
-    process.exit(0);
-  } catch (error) {
-    console.error('\n❌ Migration failed with error:', error);
-    if (mongoose.connection.readyState === 1) {
-      await mongoose.connection.close();
+  const seen = new Map();
+  for (const row of rows) {
+    const name = String(row.name ?? '').trim();
+    const isVendor = row.type === 'ContactType.vendor';
+    const bucket = isVendor ? stats.vendors : stats.customers;
+    bucket.read++;
+
+    if (!name) {
+      bucket.failed++;
+      notes.errors.push(`contact ${row._id}: blank name`);
+      continue;
     }
-    process.exit(1);
+    if (row.type !== 'ContactType.customer' && !isVendor) {
+      bucket.failed++;
+      notes.errors.push(`contact "${name}": unknown type ${row.type}`);
+      continue;
+    }
+
+    const key = norm(name);
+    if (seen.has(key)) {
+      notes.contactNameCollisions.push(`${seen.get(key)} / ${name}`);
+      bucket.existing++;
+      continue;
+    }
+    seen.set(key, name);
+
+    if (contactIds.has(key)) {
+      bucket.existing++;
+      continue;
+    }
+
+    const base = {
+      name,
+      phone: String(row.phone ?? '').trim() || PLACEHOLDER_PHONE,
+      gstin: String(row.gstin ?? '').trim(),
+      isBlocked: Boolean(row.isBlocked),
+      createdAt: parseDate(row.createdAt)
+    };
+
+    if (DRY_RUN) {
+      bucket.inserted++;
+      contactIds.set(key, { id: new mongoose.Types.ObjectId(), model: isVendor ? 'Vendor' : 'Customer' });
+      continue;
+    }
+
+    try {
+      if (isVendor) {
+        const saved = await Vendor.create(base);
+        contactIds.set(key, { id: saved._id, model: 'Vendor' });
+      } else {
+        const saved = await Customer.create({ ...base, ...(lookupPreserved(name) || {}) });
+        contactIds.set(key, { id: saved._id, model: 'Customer' });
+      }
+      bucket.inserted++;
+    } catch (error) {
+      bucket.failed++;
+      notes.errors.push(`contact "${name}": ${error.message}`);
+    }
   }
-}
 
-// Run the migration
-runMigration();
+  // The four names only orders know about
+  for (const name of MISSING_CONTACTS) {
+    const key = norm(name);
+    if (contactIds.has(key)) continue;
+    if (DRY_RUN) {
+      contactIds.set(key, { id: new mongoose.Types.ObjectId(), model: 'Customer' });
+      stats.customers.invented++;
+      continue;
+    }
+    try {
+      const saved = await Customer.create({ name, phone: PLACEHOLDER_PHONE, gstin: '', isBlocked: false });
+      contactIds.set(key, { id: saved._id, model: 'Customer' });
+      stats.customers.invented++;
+    } catch (error) {
+      notes.errors.push(`invented contact "${name}": ${error.message}`);
+    }
+  }
 
+  console.log(`  customers  read ${stats.customers.read}  inserted ${stats.customers.inserted}  skipped-as-duplicate ${stats.customers.existing}  failed ${stats.customers.failed}  created-from-orders ${stats.customers.invented}`);
+  console.log(`  vendors    read ${stats.vendors.read}  inserted ${stats.vendors.inserted}  skipped-as-duplicate ${stats.vendors.existing}  failed ${stats.vendors.failed}`);
+};
 
+// ----------------------------------------------------------------- orders
 
+// Order creators are stored as emails; the salesman logins are the same string
+// without the ".com" (faiz@srf.com -> faiz@srf). The rest stay on admin.
+const buildCreatorMap = async () => {
+  const salesmen = await Salesman.find().select('name username').lean();
+  const byUsername = new Map(salesmen.map((s) => [norm(s.username), s]));
+  return (email) => byUsername.get(norm(String(email ?? '').replace(/\.com$/i, ''))) || null;
+};
+
+// Stand-ins for the item names only orders know about, so those orders keep a
+// complete line list. They carry no price and no stock — they exist to hold the
+// name, and show up in the items list for someone to fill in or merge.
+const createPlaceholderItems = async (rows) => {
+  const wanted = new Map();
+  for (const row of rows) {
+    for (const line of row.items || []) {
+      const key = norm(line.itemName);
+      if (key && !itemIds.has(key) && !wanted.has(key)) wanted.set(key, String(line.itemName).trim());
+    }
+  }
+  if (!wanted.size) return;
+
+  console.log(`  creating ${wanted.size} placeholder item(s) for names only orders mention`);
+  for (const [key, name] of wanted) {
+    if (DRY_RUN) {
+      itemIds.set(key, new mongoose.Types.ObjectId());
+      stats.placeholders.created++;
+      continue;
+    }
+    try {
+      const saved = await Item.create({ name, price: 0, quantity: 0, category: '', checkLevel: null });
+      itemIds.set(key, saved._id);
+      stats.placeholders.created++;
+    } catch (error) {
+      notes.errors.push(`placeholder item "${name}": ${error.message}`);
+    }
+  }
+};
+
+const migrateOrders = async () => {
+  console.log('\n=== Orders ===');
+  const rows = readJson('orders.json');
+  stats.orders.read = rows.length;
+
+  if (PLACEHOLDER_ITEMS) await createPlaceholderItems(rows);
+
+  const creatorFor = await buildCreatorMap();
+  const alreadyThere = new Set(
+    ASSUME_EMPTY ? [] :
+    (await Order.find({ firestoreId: { $ne: null } }).select('firestoreId').lean()).map((o) => o.firestoreId)
+  );
+
+  const pending = [];
+  for (const row of rows) {
+    if (row._id && alreadyThere.has(row._id)) {
+      stats.orders.existing++;
+      continue;
+    }
+
+    const type = ORDER_TYPES[row.type];
+    if (!type) {
+      stats.orders.skippedBadType++;
+      notes.errors.push(`order ${row._id}: unknown type ${row.type}`);
+      continue;
+    }
+
+    const lines = [];
+    let unknownItem = false;
+    for (const line of row.items || []) {
+      const quantity = Number(line.quantity);
+      if (!Number.isFinite(quantity) || quantity < 1) {
+        stats.orders.droppedLines++;
+        continue;
+      }
+      const id = itemIds.get(norm(line.itemName));
+      if (!id) {
+        notes.unknownItemNames.add(line.itemName);
+        unknownItem = true;
+        continue;
+      }
+      lines.push({ item: id, quantity });
+    }
+
+    if (unknownItem || !lines.length) {
+      stats.orders.skippedUnknownItem++;
+      continue;
+    }
+
+    const contact = contactIds.get(norm(row.customerName));
+    const creator = creatorFor(row.createdBy);
+    if (creator) stats.orders.linkedSalesman++;
+
+    pending.push({
+      firestoreId: row._id,
+      createdAt: parseDate(row.createdAt),
+      createdBy: creator ? creator._id : String(row.createdBy ?? 'Admin'),
+      createdByType: creator ? 'salesman' : 'admin',
+      type,
+      items: lines,
+      // refPath follows the contact's own kind, so the 14 purchase orders
+      // placed against a customer and the 4 sell orders against a vendor
+      // still populate correctly
+      customerName: contact ? contact.id : undefined,
+      customerModel: contact ? contact.model : (type === 'purchase order' ? 'Vendor' : 'Customer'),
+      status: ORDER_STATUSES[row.status] || 'pending',
+      previousStatus: null,
+      notes: null
+    });
+    alreadyThere.add(row._id);
+  }
+
+  if (DRY_RUN) {
+    stats.orders.inserted = pending.length;
+  } else {
+    // insertMany in chunks — ordered:false so one bad row cannot abort the rest
+    const CHUNK = 500;
+    for (let i = 0; i < pending.length; i += CHUNK) {
+      const chunk = pending.slice(i, i + CHUNK);
+      try {
+        const saved = await Order.insertMany(chunk, { ordered: false });
+        stats.orders.inserted += saved.length;
+      } catch (error) {
+        stats.orders.inserted += error.insertedDocs ? error.insertedDocs.length : 0;
+        for (const err of error.writeErrors || []) {
+          stats.orders.failed++;
+          notes.errors.push(`order: ${err.err ? err.err.errmsg : err.message}`);
+        }
+        if (!error.writeErrors) {
+          stats.orders.failed += chunk.length;
+          notes.errors.push(`order chunk ${i}: ${error.message}`);
+        }
+      }
+      console.log(`  ...${Math.min(i + CHUNK, pending.length)}/${pending.length}`);
+    }
+  }
+
+  console.log(`  read ${stats.orders.read}  inserted ${stats.orders.inserted}  already present ${stats.orders.existing}  failed ${stats.orders.failed}`);
+  console.log(`  skipped (unknown item) ${stats.orders.skippedUnknownItem}  skipped (bad type) ${stats.orders.skippedBadType}  dropped zero-qty lines ${stats.orders.droppedLines}`);
+  console.log(`  linked to a salesman account ${stats.orders.linkedSalesman}`);
+};
+
+// ------------------------------------------------------------------ index
+
+// firestoreId is the order dedup key, so make the database enforce it too.
+// The collection ships with a non-unique sparse index of the same name, which
+// would clash with the model's — drop it and let syncIndexes rebuild.
+const ensureOrderIndex = async (db) => {
+  if (DRY_RUN) return;
+  const existing = await db.collection('orders').indexes();
+  const current = existing.find((i) => i.name === 'firestoreId_1');
+  if (current && !current.unique) {
+    await db.collection('orders').dropIndex('firestoreId_1');
+    console.log('  dropped non-unique firestoreId index');
+  }
+  await Order.syncIndexes();
+};
+
+// ------------------------------------------------------------------ check
+
+const verify = async () => {
+  console.log('\n=== Verification ===');
+  const [items, customers, vendors, orders] = await Promise.all([
+    Item.countDocuments(), Customer.countDocuments(), Vendor.countDocuments(), Order.countDocuments()
+  ]);
+  console.log(`  items ${items}  customers ${customers}  vendors ${vendors}  orders ${orders}`);
+
+  const dupItems = await Item.aggregate([
+    { $group: { _id: { name: { $toLower: '$name' }, category: { $toLower: { $ifNull: ['$category', ''] } } }, n: { $sum: 1 } } },
+    { $match: { n: { $gt: 1 } } }
+  ]);
+  const dupOrders = await Order.aggregate([
+    { $match: { firestoreId: { $ne: null } } },
+    { $group: { _id: '$firestoreId', n: { $sum: 1 } } },
+    { $match: { n: { $gt: 1 } } }
+  ]);
+  const dupContacts = await Customer.aggregate([
+    { $group: { _id: { $toLower: '$name' }, n: { $sum: 1 } } },
+    { $match: { n: { $gt: 1 } } }
+  ]);
+
+  console.log(`  duplicate items (name+category): ${dupItems.length}`);
+  console.log(`  duplicate orders (firestoreId):  ${dupOrders.length}`);
+  console.log(`  duplicate customers (name):      ${dupContacts.length}`);
+
+  const validItems = new Set((await Item.find().select('_id').lean()).map((i) => String(i._id)));
+  const validContacts = new Set([
+    ...(await Customer.find().select('_id').lean()).map((c) => String(c._id)),
+    ...(await Vendor.find().select('_id').lean()).map((v) => String(v._id))
+  ]);
+  const validSalesmen = new Set((await Salesman.find().select('_id').lean()).map((s) => String(s._id)));
+
+  let danglingItem = 0, danglingContact = 0, noContact = 0, danglingSalesman = 0, badModel = 0;
+  for (const order of await Order.find().select('items customerName customerModel createdBy createdByType').lean()) {
+    if ((order.items || []).some((l) => !validItems.has(String(l.item)))) danglingItem++;
+    if (!order.customerName) noContact++;
+    else if (!validContacts.has(String(order.customerName))) danglingContact++;
+    if (order.createdByType === 'salesman' && !validSalesmen.has(String(order.createdBy))) danglingSalesman++;
+    if (!['Customer', 'Vendor'].includes(order.customerModel)) badModel++;
+  }
+  console.log(`  orders with a dangling item ref:     ${danglingItem}`);
+  console.log(`  orders with a dangling contact ref:  ${danglingContact}`);
+  console.log(`  orders with no contact at all:       ${noContact}`);
+  console.log(`  orders with a dangling salesman ref: ${danglingSalesman}`);
+  console.log(`  orders with a bad customerModel:     ${badModel}`);
+
+  const uncategorised = await Item.countDocuments({ $or: [{ category: '' }, { category: null }, { category: { $exists: false } }] });
+  console.log(`  items without a category:            ${uncategorised}`);
+
+  const clean = !dupItems.length && !dupOrders.length && !dupContacts.length
+    && !danglingItem && !danglingContact && !danglingSalesman && !badModel;
+  console.log(clean ? '\n  ✓ no duplicates, no broken references' : '\n  ✗ issues above need a look');
+};
+
+const report = () => {
+  console.log('\n' + '='.repeat(58));
+  if (notes.itemNameCollisions.length) {
+    console.log(`\nDuplicate names inside items.json (${notes.itemNameCollisions.length}, first kept):`);
+    notes.itemNameCollisions.slice(0, 20).forEach((c) => console.log(`  ${c}`));
+  }
+  if (notes.contactNameCollisions.length) {
+    console.log(`\nDuplicate names inside contacts.json (${notes.contactNameCollisions.length}, first kept):`);
+    notes.contactNameCollisions.forEach((c) => console.log(`  ${c}`));
+  }
+  if (notes.unknownItemNames.size) {
+    console.log(`\nItem names orders reference but items.json does not have (${notes.unknownItemNames.size}) —`);
+    console.log(`those ${stats.orders.skippedUnknownItem} orders were skipped.`);
+    console.log('Re-run with --placeholder-items to migrate them against stand-in items:');
+    [...notes.unknownItemNames].forEach((n) => console.log(`  ${n}`));
+  }
+  if (stats.placeholders.created) {
+    console.log(`\nPlaceholder items created (price 0, stock 0): ${stats.placeholders.created}`);
+  }
+  if (notes.errors.length) {
+    console.log(`\nErrors (${notes.errors.length}):`);
+    notes.errors.slice(0, 25).forEach((e) => console.log(`  ${e}`));
+    if (notes.errors.length > 25) console.log(`  ...and ${notes.errors.length - 25} more`);
+  }
+  console.log('\n' + '='.repeat(58));
+};
+
+// ------------------------------------------------------------------- main
+
+(async () => {
+  console.log(`Firestore -> MongoDB migration${DRY_RUN ? '  [dry run]' : ''}${RESET ? '  [reset]' : ''}`);
+
+  await mongoose.connect(process.env.MONGODB_URI);
+  const db = mongoose.connection.db;
+  console.log(`Connected to ${db.databaseName}`);
+
+  const preserved = RESET ? await backupAndWipe(db) : readLatestPreserved();
+
+  await ensureOrderIndex(db);
+  await migrateItems(preserved);
+  await migrateContacts(preserved);
+  await migrateOrders();
+
+  if (!DRY_RUN) await verify();
+  report();
+
+  await mongoose.disconnect();
+  console.log(DRY_RUN ? 'Dry run finished — nothing was written.\n' : 'Migration finished.\n');
+})().catch(async (error) => {
+  console.error('\nMigration failed:', error);
+  await mongoose.disconnect().catch(() => {});
+  process.exit(1);
+});

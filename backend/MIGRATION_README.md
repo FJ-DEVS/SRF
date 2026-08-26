@@ -1,207 +1,146 @@
 # Firestore to MongoDB Migration Guide
 
-This document explains how to migrate your Firestore data to MongoDB.
+`migrate.js` loads the Firestore JSON exports in `firestore-export/exports/`
+into MongoDB:
 
-## Overview
+| Export | Model |
+| --- | --- |
+| `items.json` | `Item` |
+| `contacts.json` | `Customer` and `Vendor`, split on `type` |
+| `orders.json` | `Order` |
 
-The migration script (`migrate.js`) transfers data from Firestore JSON exports to your MongoDB database:
-
-- **Items**: `firestore-export/exports/items.json` → `Item` model
-- **Contacts**: `firestore-export/exports/contacts.json` → `Customer` and `Vendor` models
-- **Orders**: `firestore-export/exports/orders.json` → `Order` model
-
-## Data Transformations
-
-### Items
-- Direct mapping of name, rakNo, price, and quantity
-- Items with quantity < 1 are skipped
-- Creates a mapping for order item references
-
-### Contacts
-- **ContactType.customer** → Customer model
-- **ContactType.vendor** → Vendor model
-- Preserves phone, name, gstin, isBlocked, and createdAt
-
-### Orders
-- **OrderType.purchase** → "purchase order"
-- **OrderType.sell** → "sell order"
-- **Status Mapping**:
-  - OrderStatus.pending → "pending"
-  - OrderStatus.completed → "delivered"
-  - OrderStatus.toRoll → "to roll"
-  - OrderStatus.rolled → "rolled"
-  - OrderStatus.billed → "billed"
-  - OrderStatus.delivered → "delivered"
-- Maps item names to Item ObjectIds
-- Maps customer names to Customer ObjectIds
-- Sets createdByType to "admin" (default)
-
-## Prerequisites
-
-1. MongoDB should be running
-2. `.env` file should contain valid `MONGODB_URI`
-3. JSON export files should be in `../firestore-export/exports/` directory
-
-## Running the Migration
-
-### Step 1: Backup (Recommended)
-
-Before running the migration, backup your current MongoDB database:
-
-```bash
-# Backup command (adjust connection string as needed)
-mongodump --uri="mongodb://localhost:27017/your_database" --out=./backup
-```
-
-### Step 2: Run Migration
+## Commands
 
 ```bash
 cd backend
-node migrate.js
+
+npm run migrate:dry        # report what would happen, write nothing
+npm run migrate            # migrate; safe to re-run, never duplicates
+npm run migrate:reset      # back up + wipe, then migrate from scratch
+npm run find-duplicates    # scan the database for clashing rows
+npm run restore-backup     # list snapshots / put one back
 ```
 
-### Step 3: Review Results
+Extra flag:
 
-The script will display:
-- Progress updates during migration
-- Final summary with success/skip/failure counts
-- Any errors encountered
-- Missing item or customer references
+```bash
+node migrate.js --placeholder-items
+```
 
-## What to Expect
+Twenty item names appear in `orders.json` but not in `items.json`. Off by
+default the 36 orders using them are skipped; with this flag those names are
+created as stand-in items (price 0, stock 0) and the orders migrate.
 
-### Statistics
-The script tracks and reports:
-- Total records processed
-- Successfully migrated records
-- Skipped records (duplicates or invalid data)
-- Failed records with error details
+## Duplicate handling
 
-### Duplicate Handling
-- **Items**: Skipped if name + rakNo combination exists
-- **Customers**: Skipped if phone number exists
-- **Vendors**: Skipped if phone number exists
-- **Orders**: Always creates new orders (no duplicate check)
+The migration keys on the same identities that `utils/duplicateCheck.js`
+enforces on the admin screens, so a migrated row and a hand-typed one clash the
+same way. All keys are trimmed, whitespace-collapsed and case-insensitive.
 
-### Data Validation
-- Items with quantity < 1 are skipped
-- Orders without valid items are skipped
-- Orders with missing customer references are created but noted in the report
+| Collection | Identity | Why |
+| --- | --- | --- |
+| Item | `name` + `category` | Matches the admin duplicate check. `rakNo` is gone from the model — keying on it silently created a duplicate on every run. |
+| Customer / Vendor | `name` | **Not phone.** Six numbers in the export are shared by thirty different shops; keying on phone drops 24 real customers. Names are unique in the export. |
+| Order | `firestoreId` | The export's own document id. Unique across all 2,833 rows, and now backed by a unique sparse index, so a re-run cannot double-insert. |
 
-## Sample Output
+`Order.firestoreId` is `unique: true, sparse: true`. Orders created inside the
+app carry no `firestoreId`, so the sparse index simply skips them.
+
+Duplicate names found *inside* an export file are reported and the first one is
+kept.
+
+## Data transformations
+
+### Items
+- `name`, `price`, `quantity` carried over; negatives and non-numbers become 0.
+- `rakNo` is **dropped** — the `Item` model no longer has the field and nothing
+  in the app reads it.
+- `category` is filled in from the item name (`"3008 SHG - 0.8mm"` → `0.8mm`),
+  matching the longest category name first so `1.25mm PVC Laminate` wins over
+  `1mm`, and `1mm` never matches inside `0.71mm` or `11mm`.
+- Items with zero stock are kept — zero means awaiting restock, not invalid.
+
+### Contacts
+- `ContactType.customer` → `Customer`, `ContactType.vendor` → `Vendor`.
+- `phone`, `name`, `gstin`, `isBlocked`, `createdAt` preserved.
+- Four names that only `orders.json` mentions (Fabco Glass House - Alappuzha,
+  Sree Kailasam Traders - Kollam, New Luxmat Glass - Mannarkad, Madeena Glass &
+  Plywood - Kishattur) are created as customers with a placeholder phone, so
+  those 48 orders keep a buyer.
+
+### Orders
+- `OrderType.purchase` → `"purchase order"`, `OrderType.sell` → `"sell order"`.
+- Status: `pending`→`pending`, `completed`→`delivered`, `toRoll`→`to roll`,
+  `rolled`→`rolled`, `billed`→`billed`, `delivered`→`delivered`,
+  `cancelled`→`cancelled`.
+- `createdAt` is preserved exactly (Mongoose `timestamps` does not overwrite an
+  explicitly set value).
+- **Creators are linked to real salesman accounts.** The export stores emails
+  and the salesman logins are the same string without `.com`
+  (`faiz@srf.com` → `faiz@srf`). On a match the order gets
+  `createdByType: 'salesman'` and the salesman's `_id`, so the UI shows a name.
+  The other emails stay `createdByType: 'admin'` with the raw string.
+- **`customerModel` follows the contact's real kind, not the order type.** The
+  export contains purchase orders placed against customers and sell orders
+  against vendors; because `customerName` uses `refPath`, setting the model from
+  the contact keeps every one of them populating correctly.
+- Order lines with quantity below 1 are dropped. An order whose item name is not
+  in `items.json` is skipped whole (see `--placeholder-items`).
+
+## Backups and rollback
+
+`npm run migrate:reset` writes a snapshot to `backend/backup/<timestamp>/`
+*before* deleting anything:
 
 ```
-🚀 Starting Firestore to MongoDB Migration
-============================================================
-
-🔌 Connecting to MongoDB...
-✓ Connected to MongoDB successfully
-
-=== Starting Items Migration ===
-Found 5889 items to migrate
-✓ Migrated 100 items...
-✓ Migrated 200 items...
-...
-
-📊 MIGRATION SUMMARY REPORT
-============================================================
-
-📦 ITEMS:
-  ✓ Successfully migrated: 5500
-  ⚠️  Skipped: 389
-  ✗ Failed: 0
-  📝 Total processed: 5889
-
-👥 CUSTOMERS:
-  ✓ Successfully migrated: 190
-  ⚠️  Skipped: 5
-  ✗ Failed: 0
-  📝 Total processed: 195
-
-🏢 VENDORS:
-  ✓ Successfully migrated: 19
-  ⚠️  Skipped: 0
-  ✗ Failed: 0
-  📝 Total processed: 19
-
-📋 ORDERS:
-  ✓ Successfully migrated: 54000
-  ⚠️  Skipped: 667
-  ✗ Failed: 0
-  📝 Total processed: 54667
-
-✅ Migration process completed!
+backup/2026-08-26T06-10-52-663Z/
+  items.json  customers.json  vendors.json  orders.json  placements.json
+  preserved.json     # category, check level, payment rating, assigned salesman,
+                     # GST certificate, location link — things the export cannot
+                     # give back; re-applied by name on the next migrate
+  manifest.json
 ```
+
+`backup/` is gitignored.
+
+Placements are wiped alongside items because every placement points at an item;
+leaving them would strand them against ids that no longer exist.
+
+To roll back:
+
+```bash
+npm run restore-backup                              # list snapshots
+node restore-backup.js <stamp>                      # dry run
+node restore-backup.js <stamp> --confirm            # replace the collections
+```
+
+The restore reinserts documents with their original `_id`s, so references
+between collections line up again. Restart the backend afterwards.
+
+## After migrating
+
+`migrate.js` runs its own verification and prints it. It checks for duplicate
+items, duplicate `firestoreId`s, duplicate customer names, orders pointing at
+items/contacts/salesmen that do not exist, bad `customerModel` values, and
+uncategorised items.
+
+`npm run find-duplicates` scans the whole database separately. It reports
+customers and vendors that **share a phone number** — after a clean migration
+these are all differently-named businesses that genuinely share one number in
+the source data, not migration duplicates. Compare the names before merging
+anything.
 
 ## Troubleshooting
 
-### Connection Error
-**Error**: `MongoDB connection error`
-**Solution**: Verify `MONGODB_URI` in `.env` file and ensure MongoDB is running
+**`MongoDB connection error`** — check `MONGODB_URI` in `.env`.
 
-### Missing Items Error
-**Error**: Items not found for orders
-**Solution**: Run items migration first, as orders depend on item references
+**`E11000 duplicate key error` on `firestoreId`** — two orders in the export
+share a document id. The export currently has none; if it happens, the second
+one is reported and the rest continue (`insertMany` runs unordered).
 
-### Duplicate Key Error
-**Error**: E11000 duplicate key error
-**Solution**: The script already handles duplicates, but if you see this, you may have unique indexes on unexpected fields
+**`IndexOptionsConflict` on `firestoreId_1`** — an older non-unique index is
+still on the collection. `migrate.js` drops and rebuilds it automatically on any
+non-dry run.
 
-### File Not Found
-**Error**: `Error reading file`
-**Solution**: Verify the JSON files exist at `../firestore-export/exports/`
-
-## Post-Migration Verification
-
-After migration, verify the data:
-
-```bash
-# Connect to MongoDB shell
-mongosh "mongodb://localhost:27017/your_database"
-
-# Check counts
-db.items.countDocuments()
-db.customers.countDocuments()
-db.vendors.countDocuments()
-db.orders.countDocuments()
-
-# Sample some records
-db.items.find().limit(5)
-db.customers.find().limit(5)
-db.orders.find().limit(5)
-```
-
-## Rolling Back
-
-If you need to rollback:
-
-```bash
-# Clear collections
-mongosh "mongodb://localhost:27017/your_database"
-db.items.deleteMany({})
-db.customers.deleteMany({})
-db.vendors.deleteMany({})
-db.orders.deleteMany({})
-
-# Or restore from backup
-mongorestore --uri="mongodb://localhost:27017/your_database" ./backup
-```
-
-## Notes
-
-- The migration can be run multiple times - duplicates will be skipped
-- Orders are NOT checked for duplicates, so running multiple times will create duplicate orders
-- The script preserves original Firestore IDs in some mappings but MongoDB assigns new ObjectIds
-- CreatedAt dates from Firestore are preserved
-- All orders are attributed to "admin" as createdByType (salesman references are not preserved from the export)
-
-## Support
-
-If you encounter issues:
-1. Check the error logs in the console output
-2. Verify your .env configuration
-3. Ensure MongoDB is running and accessible
-4. Check that JSON files are valid and properly formatted
-
-
-
+**`Error reading file`** — the exports must be at
+`firestore-export/exports/{items,contacts,orders}.json`.

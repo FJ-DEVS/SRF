@@ -1,265 +1,148 @@
-# Migration Summary - Firestore to MongoDB
+# Migration Summary — Firestore to MongoDB
 
-## Overview
-Migration scripts have been created to transfer data from your Firestore JSON exports to MongoDB.
+Record of the clean re-migration run on **26 August 2026** against
+`srf-vennala`. Operating instructions live in
+[`backend/MIGRATION_README.md`](backend/MIGRATION_README.md).
 
-## Pre-Migration Check Results
+## What was done
 
-### ✅ Files Found
-All required JSON files are present and readable:
-- ✓ `firestore-export/exports/items.json`
-- ✓ `firestore-export/exports/orders.json`
-- ✓ `firestore-export/exports/contacts.json`
+The `items`, `customers`, `vendors`, `orders` and `placements` collections were
+backed up, wiped, and rebuilt from the Firestore exports.
 
-### 📊 Data Statistics
-
-#### Items (841 total)
-- **Valid items**: 612 (will be migrated)
-- **Items with zero quantity**: 229 (will be skipped)
-- **Items without rakNo**: 193
-- **Items with negative price**: 0
-
-#### Contacts (214 total)
-- **Customers**: 205 → will be migrated to Customer model
-- **Vendors**: 9 → will be migrated to Vendor model
-- **Blocked contacts**: 15
-- **Contacts with GSTIN**: 174
-
-#### Orders (2,833 total)
-- **Purchase orders**: 397 → will be converted to "purchase order"
-- **Sell orders**: 2,436 → will be converted to "sell order"
-- **Completed orders**: 1,063 → will be converted to "delivered" status
-- **Pending orders**: 1,770 → will remain "pending"
-
-### ⚠️ Data Integrity Issues
-
-#### Missing Item References
-- **41 orders** have missing item references
-- **49 total missing item references**
-- **21 unique missing item names**
-- These orders will be **SKIPPED** during migration
-
-Sample missing items:
-1. 10201 SHG - 1mm
-2. 0.8mm 1002 SF
-3. 10201 SUD - 1mm
-4. 10203 SSR - 1mm
-5. 10205 SSR - 1mm
-... and 16 more
-
-#### Missing Customer/Vendor References
-- **48 orders** have missing customer/vendor references
-- **4 unique missing customer/vendor names**
-- These orders will be **CREATED WITHOUT customer reference**
-
-Missing customers:
-1. Fabco Glass House - Alappuzha
-2. Sree Kailasam Traders - Kollam
-3. New Luxmat Glass - Mannarkad, Alappuzha
-4. Madeena Glass & Plywood - Kishattur, MLPRM
-
-### 👥 Order Creators
-14 unique order creators found:
-1. faiz@srf.com: 1,566 orders
-2. robin@skydecor.com: 264 orders
-3. satheesh@skydecor.com: 411 orders
-4. rahultvm@skydecor.com: 182 orders
-5. mujmal@srf.com: 81 orders
-... and 9 more
-
-## Expected Migration Results
-
-### What Will Be Migrated
-- **~612 items** (excluding zero quantity items)
-- **205 customers**
-- **9 vendors**
-- **~2,792 orders** (excluding 41 orders with missing items)
-
-### What Will Be Skipped
-- 229 items with quantity < 1
-- 41 orders with missing item references
-- 0 duplicate records (based on unique keys)
-
-### Data Transformations
-
-#### Order Types
-- `OrderType.purchase` → `"purchase order"`
-- `OrderType.sell` → `"sell order"`
-
-#### Order Status
-- `OrderStatus.pending` → `"pending"`
-- `OrderStatus.completed` → `"delivered"`
-- `OrderStatus.toRoll` → `"to roll"`
-- `OrderStatus.rolled` → `"rolled"`
-- `OrderStatus.billed` → `"billed"`
-- `OrderStatus.delivered` → `"delivered"`
-
-#### Contact Types
-- `ContactType.customer` → Customer model
-- `ContactType.vendor` → Vendor model
-
-## Migration Scripts Created
-
-### 1. `backend/check-migration.js`
-Pre-migration validation script that:
-- Checks if all JSON files exist
-- Analyzes data structure and integrity
-- Identifies potential issues
-- Provides detailed statistics
-
-**Usage:**
 ```bash
 cd backend
-npm run check-migration
-# or
-node check-migration.js
+node migrate.js --reset
 ```
 
-### 2. `backend/migrate.js`
-Main migration script that:
-- Connects to MongoDB
-- Migrates Items → Customer → Vendors → Orders (in order)
-- Creates proper references between documents
-- Handles duplicates gracefully
-- Provides detailed progress logs
-- Generates comprehensive migration report
+## Before and after
 
-**Usage:**
+| Collection | Before | After | Note |
+| --- | --- | --- | --- |
+| items | 870 | **841** | every item in `items.json`; 3 demo rows and 26 stray placeholders gone |
+| customers | 193 | **208** | 204 from the export + 4 that only orders referenced |
+| vendors | 8 | **7** | |
+| orders | 50 | **2,797** | the 50 were all test data with no `firestoreId`; 2,797 of 2,833 export rows migrated |
+| placements | 12 | **0** | cleared with the items they pointed at |
+
+Untouched: `categories` (9), `raks` (7), `cargos` (8), `salesmen` (5),
+`rollers` (2), `schemas` (2).
+
+Snapshot of the previous state: `backend/backup/2026-08-26T06-10-52-663Z/`.
+
+## Verification
+
+Run automatically at the end of `migrate.js`:
+
+```
+duplicate items (name+category): 0
+duplicate orders (firestoreId):  0
+duplicate customers (name):      0
+orders with a dangling item ref:     0
+orders with a dangling contact ref:  0
+orders with no contact at all:       0
+orders with a dangling salesman ref: 0
+orders with a bad customerModel:     0
+```
+
+Re-running `node migrate.js` inserts **0** rows and leaves every count
+unchanged, so the migration is idempotent.
+
+## Bugs fixed in `migrate.js`
+
+The previous script could not be re-run safely. Four defects:
+
+1. **Items deduplicated on `rakNo`**, a field the `Item` model no longer has.
+   Mongoose 9 (`strictQuery: false`) passed it straight to MongoDB, where it
+   matched nothing — every run inserted a full duplicate set of 841 items.
+2. **Contacts deduplicated on phone.** Six phone numbers in the export are
+   shared by thirty different shops, so 24 real customers were silently
+   dropped. That is why the database held 181 export customers, not 205.
+   Identity is now the **name**, which is unique in the export.
+3. **Purchase orders were never linked to a vendor.** Only
+   `contact.type === 'customer'` was mapped, and `customerModel` was never set,
+   so all 380 purchase orders would have landed with no supplier.
+4. **`category` was never written**, leaving it to a separate backfill script.
+   It is now derived from the item name during the migration.
+
+`Order.firestoreId` is now `unique: true, sparse: true`, so the database itself
+refuses a double-insert. App-created orders have no `firestoreId` and are
+skipped by the sparse index.
+
+## Data facts worth knowing
+
+**Orders linked to salesman accounts — 2,397 of 2,797.** The export stores
+creator emails; the salesman logins are the same string minus `.com`
+(`faiz@srf.com` → `faiz@srf`). Matches for Faiz, Robin, Satheesh and Rahul are
+linked as `createdByType: 'salesman'`. The remaining 400 orders belong to nine
+emails with no account (`rahultvm@skydecor.com`, `mujmal@srf.com`,
+`ibrahimkutty@skydecor.com`, `renish@srf.com`, and five one-off addresses) and
+stay on `admin` with the email string. Create those salesmen and re-run to link
+them.
+
+**36 orders were not migrated.** They reference 20 item names that do not exist
+in `items.json`:
+
+```
+10201 SHG - 1mm     0.8mm 1002 SF      10201 SUD - 1mm    10203 SSR - 1mm
+10205 SSR - 1mm     10205 SHG - 1mm    1027 HG SDE - 50mtr  10202 SSR - 1mm
+40403 SKR - 1mm     10206 SHG - 1mm    1010 HGS - 0.8mm   10204 SHG - 1mm
+1022 SDE - 25mtr    10121 SF - 1mm     10123 SF - 1mm     30320 SF - 1mm
+115 SDE             SDE 1021 HG - 25mtr  10204 FBT - 1mm  30312 SUD - 1mm
+```
+
+To bring them in against stand-in items (price 0, stock 0):
+
+```bash
+node migrate.js --placeholder-items
+```
+
+**Order type does not always match contact type.** The export has 4 purchase
+orders placed against a customer and 8 sell orders against a vendor.
+`customerModel` is set from the contact's real kind so `refPath` populates all
+of them; the app's own rule (purchase → Vendor) still applies to new orders.
+
+**18 items have no category** (down from 22). Their size is one the
+`categories` collection does not list yet — `0.62mm`, `0.82mm`, `0.92mm`,
+`1.2mm`, `0.8x22mm`, `2mm` — plus non-size stock like `1kg Jar - Adhesive`.
+Add the missing categories in the admin UI, then:
+
+```bash
+node migrate-item-categories.js           # dry run
+node migrate-item-categories.js --apply
+```
+
+**Three duplicate names inside `contacts.json`**, first kept:
+`Factory mismach` / `Factory Mismach`, `Marudhar Laminates - Chennai` twice,
+`demo` twice.
+
+**Seven phone-number collisions survive on purpose.** `npm run find-duplicates`
+reports 6 customer groups and 1 vendor group sharing a number. Every one is a
+set of differently-named businesses that share a number in the source data —
+real records, not duplicates. The vendor group (`Skydecor Laminates`,
+`Skydecor - Banglore`, `Skydecor`, `Nahar Panel - Coimbatore`) may be worth
+merging by hand; that is a business decision, not a migration one.
+
+## Lost in the wipe
+
+App-only fields are captured into `preserved.json` before the wipe and
+re-applied by name, but these had no matching name in the export and were not
+restored:
+
+- **12 customer → salesman assignments.** Nine of them were on rows a user had
+  hand-created because the old phone-based dedup had dropped the real customer
+  (`ess ess plywoods-calicut`, `D A modular manufactures`, `matha glass house`,
+  and others). Those customers now exist properly under their export names —
+  reassign the salesmen in the admin UI.
+- **1 GST certificate link** and **1 non-default payment rating** on demo rows.
+- **12 placements** in rak A01. Re-place the stock from the raks screen.
+
+## Rollback
+
 ```bash
 cd backend
-npm run migrate
-# or
-node migrate.js
+npm run restore-backup                                        # list snapshots
+node restore-backup.js 2026-08-26T06-10-52-663Z --confirm     # put it back
 ```
 
-### 3. `backend/MIGRATION_README.md`
-Comprehensive documentation with:
-- Detailed usage instructions
-- Data transformation mappings
-- Troubleshooting guide
-- Post-migration verification steps
-- Rollback instructions
-
-## How to Run the Migration
-
-### Prerequisites
-1. ✅ MongoDB must be running
-2. ✅ `.env` file must have valid `MONGODB_URI`
-3. ⚠️  Backend server should be stopped (optional but recommended)
-4. 💡 Database backup recommended (optional but wise)
-
-### Steps
-
-#### Step 1: Stop the Backend (Recommended)
-```bash
-# In terminal 1 where backend is running, press Ctrl+C to stop
-```
-
-#### Step 2: Backup Current Database (Optional but Recommended)
-```bash
-mongodump --uri="your_mongodb_uri" --out=./backup-before-migration
-```
-
-#### Step 3: Run Migration
-```bash
-cd backend
-node migrate.js
-```
-
-#### Step 4: Verify Results
-```bash
-# Check the console output for:
-# - Success counts
-# - Skipped counts
-# - Error counts
-# - Final summary report
-```
-
-#### Step 5: Verify Database
-```bash
-# Connect to MongoDB and check
-mongosh "your_mongodb_uri"
-
-# Check counts
-db.items.countDocuments()
-db.customers.countDocuments()
-db.vendors.countDocuments()
-db.orders.countDocuments()
-
-# Sample some records
-db.items.find().limit(3).pretty()
-db.customers.find().limit(3).pretty()
-db.orders.find().limit(3).pretty()
-```
-
-#### Step 6: Restart Backend
-```bash
-cd backend
-npm start
-```
-
-## Rollback Plan
-
-If something goes wrong:
-
-### Option 1: Clear Collections
-```bash
-mongosh "your_mongodb_uri"
-db.items.deleteMany({})
-db.customers.deleteMany({})
-db.vendors.deleteMany({})
-db.orders.deleteMany({})
-```
-
-### Option 2: Restore from Backup
-```bash
-mongorestore --uri="your_mongodb_uri" ./backup-before-migration
-```
-
-## Notes
-
-- The migration can be run multiple times
-- Duplicate items/customers/vendors will be skipped on subsequent runs
-- **Orders are NOT checked for duplicates** - running multiple times will create duplicate orders
-- All timestamps are preserved from Firestore exports
-- Order creators are preserved but `createdByType` is set to "admin" (salesman references not available in export)
-
-## Support Files Created
-
-1. `/backend/migrate.js` - Main migration script
-2. `/backend/check-migration.js` - Pre-migration validator
-3. `/backend/MIGRATION_README.md` - Detailed documentation
-4. `/backend/package.json` - Updated with migration scripts
-
-## Ready to Migrate?
-
-Everything is ready! The migration scripts are thoroughly tested and handle edge cases properly.
-
-**To proceed:**
-```bash
-cd backend
-node migrate.js
-```
-
-The script will:
-1. ✓ Connect to MongoDB
-2. ✓ Migrate items (with progress updates)
-3. ✓ Migrate customers and vendors (with progress updates)
-4. ✓ Migrate orders (with progress updates)
-5. ✓ Generate detailed final report
-6. ✓ Close connection gracefully
-
-**Estimated time:** 2-5 minutes depending on database speed
-
-**Expected output:**
-- Real-time progress updates every 50-100 records
-- Warnings for skipped/problematic records
-- Final summary with complete statistics
-- Error details if any issues occur
-
----
-
-*Last updated: December 26, 2025*
-
-
-
+Documents come back with their original `_id`s, so references line up again.
+Restart the backend afterwards.

@@ -3,6 +3,9 @@ const Order = require('../models/Order');
 const Salesman = require('../models/Salesman');
 const Category = require('../models/Category');
 const Item = require('../models/Item');
+const { exact, findDuplicate } = require('../utils/duplicateCheck');
+
+const duplicateNameMessage = (name) => `A schema named "${String(name).trim()}" already exists`;
 
 // Sell-order statuses that count as a completed sale for incentive points.
 // Widen this list if partially-completed orders should also earn points.
@@ -115,6 +118,11 @@ exports.createSchema = async (req, res) => {
       return res.status(400).json({ success: false, message: 'To date must be on or after From date' });
     }
 
+    const clash = await findDuplicate(Schema, { name: exact(name) });
+    if (clash) {
+      return res.status(400).json({ success: false, message: duplicateNameMessage(name) });
+    }
+
     const allocations = buildAllocations(pointsAllocations);
     const tierList = buildTiers(tiers);
 
@@ -205,6 +213,10 @@ exports.updateSchema = async (req, res) => {
     if (name !== undefined) {
       if (!name.trim()) {
         return res.status(400).json({ success: false, message: 'Schema name is required' });
+      }
+      const clash = await findDuplicate(Schema, { name: exact(name) }, schema._id);
+      if (clash) {
+        return res.status(400).json({ success: false, message: duplicateNameMessage(name) });
       }
       schema.name = name.trim();
     }
