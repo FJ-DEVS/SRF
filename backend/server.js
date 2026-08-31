@@ -34,6 +34,7 @@ const rakRoutes = require('./routes/rak');
 const rollerRoutes = require('./routes/roller');
 const placementRoutes = require('./routes/placement');
 const uploadRoutes = require('./routes/upload');
+const databaseRoutes = require('./routes/database');
 const Category = require('./models/Category');
 
 // Use routes
@@ -50,6 +51,7 @@ app.use('/api/raks', rakRoutes);
 app.use('/api/rollers', rollerRoutes);
 app.use('/api/placements', placementRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/database', databaseRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];

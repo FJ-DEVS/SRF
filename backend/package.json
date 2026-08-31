@@ -11,7 +11,8 @@
     "migrate:dry": "node migrate.js --dry-run",
     "migrate:reset": "node migrate.js --reset",
     "find-duplicates": "node find-duplicates.js",
-    "restore-backup": "node restore-backup.js"
+    "restore-backup": "node restore-backup.js",
+    "order-status": "node set-order-status.js"
   },
   "keywords": [],
   "author": "",
