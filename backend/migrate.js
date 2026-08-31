@@ -4,7 +4,17 @@
 //   node migrate.js              migrate; safe to re-run, never duplicates
 //   node migrate.js --reset      back up + wipe items/customers/vendors/orders/
 //                                placements first, then migrate from scratch
-//   --placeholder-items          also create the 20 item names that only orders
+//   --sync                       bring rows that already exist back in line with
+//                                the export: item STOCK, contact details, and
+//                                pending orders Firestore reports finished.
+//                                Use after a fresh Firestore dump.
+//   --sync-price                 --sync, and pull price from the export too.
+//                                Off by default because prices are maintained
+//                                in the admin screens and are 0 for most items
+//                                in Firestore.
+//   --all-completed              give every order the status "completed"
+//                                instead of the one the export carries.
+//   --placeholder-items          also create the item names that only orders
 //                                mention (price 0, stock 0) so the 36 orders
 //                                using them migrate instead of being skipped
 //
@@ -38,6 +48,15 @@ const ASSUME_EMPTY = RESET && DRY_RUN;
 // Twenty item names appear in orders.json but not in items.json. Off by
 // default: an item with no price and no stock is worse than a missing order.
 const PLACEHOLDER_ITEMS = process.argv.includes('--placeholder-items');
+// Firestore keeps moving after an export is taken. With --sync, rows that
+// already exist are brought back in line with the export instead of being left
+// alone. Stock only by default: prices are now maintained in the admin screens
+// (Bulk Price), and most items carry price 0 in Firestore, so syncing price
+// would quietly undo that work. --sync-price opts back in.
+const SYNC = process.argv.includes('--sync') || process.argv.includes('--sync-price');
+const SYNC_PRICE = process.argv.includes('--sync-price');
+// Every order ends up "completed" rather than carrying the export's status.
+const ALL_COMPLETED = process.argv.includes('--all-completed');
 
 const EXPORT_DIR = path.join(__dirname, '../firestore-export/exports');
 const BACKUP_ROOT = path.join(__dirname, 'backup');
@@ -46,14 +65,10 @@ const BACKUP_ROOT = path.join(__dirname, 'backup');
 // them points at an item; wiping items without them leaves dangling rows.
 const OWNED = ['items', 'customers', 'vendors', 'orders', 'placements'];
 
-// Referenced by orders but absent from contacts.json — created as customers so
-// those 48 orders keep a link instead of showing a blank buyer.
-const MISSING_CONTACTS = [
-  'Fabco Glass House - Alappuzha',
-  'Sree Kailasam Traders - Kollam',
-  'New Luxmat Glass - Mannarkad, Alappuzha',
-  'Madeena Glass & Plywood - Kishattur, MLPRM'
-];
+// Some orders name a buyer that contacts.json does not contain. They are
+// created as customers so those orders keep a link instead of a blank buyer.
+// Worked out from the export itself — the list grows every time Firestore is
+// re-exported, so it must not be hard-coded.
 const PLACEHOLDER_PHONE = '0000000000';
 
 const ORDER_TYPES = {
@@ -98,13 +113,13 @@ const nonNegative = (value) => {
 };
 
 const stats = {
-  items: { read: 0, inserted: 0, existing: 0, failed: 0 },
-  customers: { read: 0, inserted: 0, existing: 0, failed: 0, invented: 0 },
-  vendors: { read: 0, inserted: 0, existing: 0, failed: 0 },
+  items: { read: 0, inserted: 0, existing: 0, failed: 0, updated: 0 },
+  customers: { read: 0, inserted: 0, existing: 0, failed: 0, invented: 0, updated: 0 },
+  vendors: { read: 0, inserted: 0, existing: 0, failed: 0, updated: 0 },
   placeholders: { created: 0 },
-  orders: { read: 0, inserted: 0, existing: 0, failed: 0, skippedUnknownItem: 0, skippedBadType: 0, droppedLines: 0, linkedSalesman: 0 }
+  orders: { read: 0, inserted: 0, existing: 0, failed: 0, skippedUnknownItem: 0, skippedBadType: 0, droppedLines: 0, linkedSalesman: 0, updated: 0 }
 };
-const notes = { itemNameCollisions: [], contactNameCollisions: [], unknownItemNames: new Set(), errors: [] };
+const notes = { itemNameCollisions: [], contactNameCollisions: [], unknownItemNames: new Set(), errors: [], itemChanges: [], inventedContacts: [] };
 
 // name -> _id, and name -> { id, model } for contacts
 const itemIds = new Map();
@@ -219,10 +234,12 @@ const migrateItems = async (preserved) => {
 
   const matchers = await buildCategoryMatchers();
   const lookupPreserved = preservedLookup(preserved.items);
+  const current = new Map();
 
   if (!ASSUME_EMPTY) {
-    for (const existing of await Item.find().select('name category').lean()) {
+    for (const existing of await Item.find().select('name category price quantity').lean()) {
       itemIds.set(norm(existing.name), existing._id);
+      current.set(norm(existing.name), existing);
     }
   }
 
@@ -245,6 +262,24 @@ const migrateItems = async (preserved) => {
 
     if (itemIds.has(key)) {
       stats.items.existing++;
+      // The export is a snapshot; Firestore keeps trading after it is taken.
+      // --sync pulls price and stock back in line with it.
+      if (SYNC) {
+        const before = current.get(key);
+        const quantity = nonNegative(row.quantity);
+        const price = nonNegative(row.price);
+        const next = {};
+        if (before && before.quantity !== quantity) next.quantity = quantity;
+        if (SYNC_PRICE && before && before.price !== price) next.price = price;
+        if (Object.keys(next).length) {
+          notes.itemChanges.push(`${name}: ${[
+            next.quantity !== undefined ? `stock ${before.quantity} -> ${quantity}` : null,
+            next.price !== undefined ? `price ${before.price} -> ${price}` : null
+          ].filter(Boolean).join(', ')}`);
+          if (!DRY_RUN) await Item.updateOne({ _id: itemIds.get(key) }, { $set: next });
+          stats.items.updated++;
+        }
+      }
       continue;
     }
 
@@ -276,7 +311,7 @@ const migrateItems = async (preserved) => {
     }
   }
 
-  console.log(`  read ${stats.items.read}  inserted ${stats.items.inserted}  skipped-as-duplicate ${stats.items.existing}  failed ${stats.items.failed}`);
+  console.log(`  read ${stats.items.read}  inserted ${stats.items.inserted}  already present ${stats.items.existing}  failed ${stats.items.failed}${SYNC ? `  ${SYNC_PRICE ? 'price/stock' : 'stock'} updated ${stats.items.updated}` : ''}`);
 };
 
 // --------------------------------------------------------------- contacts
@@ -286,12 +321,15 @@ const migrateContacts = async (preserved) => {
   const rows = readJson('contacts.json');
   const lookupPreserved = preservedLookup(preserved.customers);
 
+  const current = new Map();
   if (!ASSUME_EMPTY) {
-    for (const existing of await Customer.find().select('name').lean()) {
+    for (const existing of await Customer.find().select('name phone gstin isBlocked').lean()) {
       contactIds.set(norm(existing.name), { id: existing._id, model: 'Customer' });
+      current.set(norm(existing.name), existing);
     }
-    for (const existing of await Vendor.find().select('name').lean()) {
+    for (const existing of await Vendor.find().select('name phone gstin isBlocked').lean()) {
       contactIds.set(norm(existing.name), { id: existing._id, model: 'Vendor' });
+      current.set(norm(existing.name), existing);
     }
   }
 
@@ -323,6 +361,24 @@ const migrateContacts = async (preserved) => {
 
     if (contactIds.has(key)) {
       bucket.existing++;
+      // Compare before writing: updateOne always reports a modification
+      // because `timestamps` bumps updatedAt, so modifiedCount cannot tell us
+      // whether anything really changed.
+      if (SYNC) {
+        const before = current.get(key);
+        const next = {
+          phone: String(row.phone ?? '').trim() || PLACEHOLDER_PHONE,
+          gstin: String(row.gstin ?? '').trim(),
+          isBlocked: Boolean(row.isBlocked)
+        };
+        if (before && (before.phone !== next.phone
+          || (before.gstin || '') !== next.gstin
+          || Boolean(before.isBlocked) !== next.isBlocked)) {
+          const Model = contactIds.get(key).model === 'Vendor' ? Vendor : Customer;
+          if (!DRY_RUN) await Model.updateOne({ _id: contactIds.get(key).id }, { $set: next });
+          bucket.updated++;
+        }
+      }
       continue;
     }
 
@@ -355,10 +411,18 @@ const migrateContacts = async (preserved) => {
     }
   }
 
-  // The four names only orders know about
-  for (const name of MISSING_CONTACTS) {
-    const key = norm(name);
-    if (contactIds.has(key)) continue;
+  // Buyers that only orders.json names. Worked out from the export rather than
+  // listed by hand, so a fresh Firestore dump brings its own along.
+  const orphanNames = new Map();
+  for (const order of readJson('orders.json')) {
+    const raw = String(order.customerName ?? '').trim();
+    const key = norm(raw);
+    if (!raw || contactIds.has(key) || orphanNames.has(key)) continue;
+    orphanNames.set(key, raw);
+  }
+
+  for (const [key, name] of orphanNames) {
+    notes.inventedContacts.push(name);
     if (DRY_RUN) {
       contactIds.set(key, { id: new mongoose.Types.ObjectId(), model: 'Customer' });
       stats.customers.invented++;
@@ -369,12 +433,12 @@ const migrateContacts = async (preserved) => {
       contactIds.set(key, { id: saved._id, model: 'Customer' });
       stats.customers.invented++;
     } catch (error) {
-      notes.errors.push(`invented contact "${name}": ${error.message}`);
+      notes.errors.push(`contact "${name}" created from orders: ${error.message}`);
     }
   }
 
-  console.log(`  customers  read ${stats.customers.read}  inserted ${stats.customers.inserted}  skipped-as-duplicate ${stats.customers.existing}  failed ${stats.customers.failed}  created-from-orders ${stats.customers.invented}`);
-  console.log(`  vendors    read ${stats.vendors.read}  inserted ${stats.vendors.inserted}  skipped-as-duplicate ${stats.vendors.existing}  failed ${stats.vendors.failed}`);
+  console.log(`  customers  read ${stats.customers.read}  inserted ${stats.customers.inserted}  already present ${stats.customers.existing}  failed ${stats.customers.failed}  created-from-orders ${stats.customers.invented}${SYNC ? `  updated ${stats.customers.updated}` : ''}`);
+  console.log(`  vendors    read ${stats.vendors.read}  inserted ${stats.vendors.inserted}  already present ${stats.vendors.existing}  failed ${stats.vendors.failed}${SYNC ? `  updated ${stats.vendors.updated}` : ''}`);
 };
 
 // ----------------------------------------------------------------- orders
@@ -425,15 +489,32 @@ const migrateOrders = async () => {
   if (PLACEHOLDER_ITEMS) await createPlaceholderItems(rows);
 
   const creatorFor = await buildCreatorMap();
-  const alreadyThere = new Set(
+  const alreadyThere = new Map(
     ASSUME_EMPTY ? [] :
-    (await Order.find({ firestoreId: { $ne: null } }).select('firestoreId').lean()).map((o) => o.firestoreId)
+    (await Order.find({ firestoreId: { $ne: null } }).select('firestoreId status').lean())
+      .map((o) => [o.firestoreId, o])
   );
 
   const pending = [];
   for (const row of rows) {
     if (row._id && alreadyThere.has(row._id)) {
       stats.orders.existing++;
+      // Forward-only status sync. The export knows just "pending" and
+      // "completed"; an order that has since moved to "to roll"/"rolled"/
+      // "billed" inside the app is further along than Firestore, so it is left
+      // alone. Only a still-pending order that Firestore reports finished is
+      // moved on.
+      if (SYNC && !DRY_RUN) {
+        const existing = alreadyThere.get(row._id);
+        const mapped = ALL_COMPLETED ? 'completed' : (ORDER_STATUSES[row.status] || 'pending');
+        const advance = ALL_COMPLETED
+          ? existing.status !== 'completed'
+          : existing.status === 'pending' && mapped === 'delivered';
+        if (advance) {
+          await Order.updateOne({ _id: existing._id }, { $set: { status: mapped } });
+          stats.orders.updated++;
+        }
+      }
       continue;
     }
 
@@ -482,11 +563,11 @@ const migrateOrders = async () => {
       // still populate correctly
       customerName: contact ? contact.id : undefined,
       customerModel: contact ? contact.model : (type === 'purchase order' ? 'Vendor' : 'Customer'),
-      status: ORDER_STATUSES[row.status] || 'pending',
+      status: ALL_COMPLETED ? 'completed' : (ORDER_STATUSES[row.status] || 'pending'),
       previousStatus: null,
       notes: null
     });
-    alreadyThere.add(row._id);
+    alreadyThere.set(row._id, { status: ORDER_STATUSES[row.status] || 'pending' });
   }
 
   if (DRY_RUN) {
@@ -514,7 +595,7 @@ const migrateOrders = async () => {
     }
   }
 
-  console.log(`  read ${stats.orders.read}  inserted ${stats.orders.inserted}  already present ${stats.orders.existing}  failed ${stats.orders.failed}`);
+  console.log(`  read ${stats.orders.read}  inserted ${stats.orders.inserted}  already present ${stats.orders.existing}  failed ${stats.orders.failed}${SYNC ? `  status advanced ${stats.orders.updated}` : ''}`);
   console.log(`  skipped (unknown item) ${stats.orders.skippedUnknownItem}  skipped (bad type) ${stats.orders.skippedBadType}  dropped zero-qty lines ${stats.orders.droppedLines}`);
   console.log(`  linked to a salesman account ${stats.orders.linkedSalesman}`);
 };
@@ -609,6 +690,15 @@ const report = () => {
   }
   if (stats.placeholders.created) {
     console.log(`\nPlaceholder items created (price 0, stock 0): ${stats.placeholders.created}`);
+  }
+  if (notes.inventedContacts.length) {
+    console.log(`\nBuyers named only by orders.json, created as customers (${notes.inventedContacts.length}):`);
+    notes.inventedContacts.forEach((n) => console.log(`  ${n}`));
+  }
+  if (notes.itemChanges.length) {
+    console.log(`\nPrice/stock brought in line with the export (${notes.itemChanges.length}):`);
+    notes.itemChanges.slice(0, 40).forEach((c) => console.log(`  ${c}`));
+    if (notes.itemChanges.length > 40) console.log(`  ...and ${notes.itemChanges.length - 40} more`);
   }
   if (notes.errors.length) {
     console.log(`\nErrors (${notes.errors.length}):`);

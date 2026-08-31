@@ -16,6 +16,7 @@ import {
   Trophy,
   LayoutGrid,
   Disc3,
+  DatabaseBackup,
   LogOut,
   MoreHorizontal,
   X
@@ -34,6 +35,7 @@ const menuItems = [
   { path: '/cargo', icon: Truck, label: 'Cargo' },
   { path: '/schemas', icon: Award, label: 'Schema' },
   { path: '/schema-leaderboard', icon: Trophy, label: 'Leaderboard' },
+  { path: '/database', icon: DatabaseBackup, label: 'Database' },
 ];
 
 // Mobile bottom bar: first 4 items get a tab, the rest live in the "More" sheet

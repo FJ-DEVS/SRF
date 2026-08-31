@@ -69,6 +69,12 @@ exports.loginSalesman = async (req, res) => {
   }
 };
 
+// Verify the caller's own session — used by the mobile app to notice that the
+// admin deleted the account even while the app is sitting idle
+exports.verifySalesman = (req, res) => {
+  res.status(200).json({ success: true, user: req.user });
+};
+
 // Create salesman (Admin only)
 exports.createSalesman = async (req, res) => {
   try {
