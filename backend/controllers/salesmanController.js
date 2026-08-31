@@ -44,7 +44,12 @@ exports.loginSalesman = async (req, res) => {
         name: salesman.name
       },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      // Staff work a full route before they get near a login screen, and a
+      // 24h token meant everyone was signed out once a day. Deleting the
+      // account still kills every session it has open immediately (the auth
+      // middleware checks the account still exists on every request), so the
+      // longer window does not outlive the admin's control over access.
+      { expiresIn: '30d' }
     );
 
     res.status(200).json({
