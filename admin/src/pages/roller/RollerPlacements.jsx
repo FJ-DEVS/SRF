@@ -4,6 +4,8 @@ import { getSocket } from '../../utils/socket';
 import ConfirmModal from '../../components/ConfirmModal';
 import AlertModal from '../../components/AlertModal';
 import Pagination from '../../components/Pagination';
+import SortSelect from '../../components/SortSelect';
+import { PLACEMENT_SORT_OPTIONS, DEFAULT_PLACEMENT_SORT } from '../../utils/sortOptions';
 import {
   Search, X, Package, LayoutGrid, Table2, Trash2, MapPin,
   MousePointerClick, Check, RefreshCw, Boxes
@@ -14,6 +16,29 @@ const SEARCH_DEBOUNCE_MS = 350;
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+// Rak codes read as A2, A10, A19 — numeric so A2 lands before A10, and
+// case-insensitive to match the collation the list endpoints sort with
+const byText = (a, b) =>
+  String(a || '').localeCompare(String(b || ''), 'en', { numeric: true, sensitivity: 'base' });
+
+const byDate = (a, b) => new Date(a || 0) - new Date(b || 0);
+
+// A placement row is { rak, placement }. Every comparator falls back to the rak
+// code then the item name, so equal rows keep a stable, predictable order.
+const PLACEMENT_SORTS = {
+  rak_asc: (a, b) => byText(a.rak.code, b.rak.code),
+  rak_desc: (a, b) => byText(b.rak.code, a.rak.code),
+  item_asc: (a, b) => byText(a.placement.item?.name, b.placement.item?.name),
+  item_desc: (a, b) => byText(b.placement.item?.name, a.placement.item?.name),
+  qty_asc: (a, b) => (a.placement.quantity || 0) - (b.placement.quantity || 0),
+  qty_desc: (a, b) => (b.placement.quantity || 0) - (a.placement.quantity || 0),
+  newest: (a, b) => byDate(b.placement.createdAt, a.placement.createdAt),
+  oldest: (a, b) => byDate(a.placement.createdAt, b.placement.createdAt)
+};
+
+const tieBreak = (a, b) =>
+  byText(a.rak.code, b.rak.code) || byText(a.placement.item?.name, b.placement.item?.name);
 
 // Item placement: pick an item, then drop or tap it into raks that have space.
 // A rak is shared by however many items fit inside its space, and one item can
@@ -36,6 +61,7 @@ const RollerPlacements = () => {
   const [raksLoading, setRaksLoading] = useState(true);
   const [rakSearch, setRakSearch] = useState('');
   const [placedSearch, setPlacedSearch] = useState('');
+  const [placedSort, setPlacedSort] = useState(DEFAULT_PLACEMENT_SORT);
   const [rakView, setRakView] = useState('map');
 
   // ---- interaction state ----------------------------------------------
@@ -166,16 +192,20 @@ const RollerPlacements = () => {
     [raks, rakSearch]
   );
 
-  const visiblePlaced = useMemo(
-    () =>
-      placedRows.filter(({ rak, placement }) => {
-        const q = placedSearch.trim().toLowerCase();
-        if (!q) return true;
-        const itemName = placement.item?.name || '';
-        return `${rak.code} ${rak.name} ${itemName}`.toLowerCase().includes(q);
-      }),
-    [placedRows, placedSearch]
-  );
+  // Search first, then sort what is left, so the order applies to the results
+  // the roller is actually looking at
+  const visiblePlaced = useMemo(() => {
+    const q = placedSearch.trim().toLowerCase();
+
+    const matches = placedRows.filter(({ rak, placement }) => {
+      if (!q) return true;
+      const itemName = placement.item?.name || '';
+      return `${rak.code} ${rak.name} ${itemName}`.toLowerCase().includes(q);
+    });
+
+    const compare = PLACEMENT_SORTS[placedSort] || PLACEMENT_SORTS[DEFAULT_PLACEMENT_SORT];
+    return matches.sort((a, b) => compare(a, b) || tieBreak(a, b));
+  }, [placedRows, placedSearch, placedSort]);
 
   const totalSpace = raks.reduce((sum, r) => sum + (r.capacity || 0), 0);
   const totalUsed = raks.reduce((sum, r) => sum + (r.usedQty || 0), 0);
@@ -667,8 +697,8 @@ const RollerPlacements = () => {
           </span>
         </div>
 
-        <div className="border-b border-slate-100 p-2.5">
-          <div className="relative">
+        <div className="flex flex-col gap-2.5 border-b border-slate-100 p-2.5 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -687,6 +717,12 @@ const RollerPlacements = () => {
               </button>
             )}
           </div>
+          <SortSelect
+            value={placedSort}
+            onChange={setPlacedSort}
+            options={PLACEMENT_SORT_OPTIONS}
+            className="w-full sm:w-auto"
+          />
         </div>
 
         {raksLoading ? (
