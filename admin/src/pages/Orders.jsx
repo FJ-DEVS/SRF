@@ -4,6 +4,7 @@ import api from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import ShareOrderModal from '../components/ShareOrderModal';
+import RakAllocationModal from '../components/RakAllocationModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
@@ -87,6 +88,8 @@ const Orders = () => {
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
+  const [showRakModal, setShowRakModal] = useState(false);
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showAlertModal, setShowAlertModal] = useState(false);
@@ -224,18 +227,29 @@ const Orders = () => {
     }
   };
 
-  const handleStatusUpdate = async () => {
+  // rakAllocation is only sent for the move into "to roll", where the admin
+  // picks the raks by hand. Leaving it off lets the server fall back to
+  // oldest-first on its own.
+  const handleStatusUpdate = async (rakAllocation) => {
     try {
-      const response = await api.put(`/orders/${selectedOrder._id}/status`, { status: newStatus });
+      setStatusSubmitting(true);
+      const body = { status: newStatus };
+      if (rakAllocation) body.rakAllocation = rakAllocation;
+
+      const response = await api.put(`/orders/${selectedOrder._id}/status`, body);
       if (response.data.success) {
         fetchOrders();
         setShowStatusModal(false);
+        setShowRakModal(false);
         setSelectedOrder(null);
         setNewStatus('');
       }
     } catch (error) {
       setShowStatusModal(false);
+      setShowRakModal(false);
       showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
+    } finally {
+      setStatusSubmitting(false);
     }
   };
 
@@ -444,9 +458,16 @@ const Orders = () => {
         (order.type === 'purchase order' ? order.status === 'pending' : order.status !== 'delivered') && (
           <button
             onClick={() => {
+              const next = getNextStatus(order.status, order.type);
               setSelectedOrder(order);
-              setNewStatus(getNextStatus(order.status, order.type));
-              setShowStatusModal(true);
+              setNewStatus(next);
+              // This is the step where stock leaves the shelves, so the admin
+              // gets to say which raks give it up
+              if (order.type === 'sell order' && next === 'to roll') {
+                setShowRakModal(true);
+              } else {
+                setShowStatusModal(true);
+              }
             }}
             className="srf-row-action text-emerald-600 hover:bg-emerald-50"
             title={`Advance to "${getNextStatus(order.status, order.type)}"`}
@@ -913,9 +934,23 @@ const Orders = () => {
         }}
         onConfirm={handleStatusUpdate}
         title="Update Order Status"
-        message={`Move this order from "${selectedOrder?.status}" to "${newStatus}"?${newStatus === 'to roll' ? ' The stock comes off the raks now — oldest rak first.' : ''}`}
+        message={`Move this order from "${selectedOrder?.status}" to "${newStatus}"?`}
         type="info"
         confirmLabel="Update"
+      />
+
+      {/* Rak picker — only on the pending → "to roll" step of a sell order */}
+      <RakAllocationModal
+        isOpen={showRakModal}
+        onClose={() => {
+          setShowRakModal(false);
+          setSelectedOrder(null);
+          setNewStatus('');
+        }}
+        order={selectedOrder}
+        onConfirm={handleStatusUpdate}
+        submitting={statusSubmitting}
+        showAlert={showAlert}
       />
 
       {/* Delete Confirmation Modal */}

@@ -203,6 +203,137 @@ const place = async (item, rak, quantity, minutesAgo) =>
   check('only what fits went back', back.quantity, 5);
   check('TA04 not overfilled', (await Placement.find({ rak: A04._id })).reduce((n, p) => n + p.quantity, 0), 40);
 
+  // ---- the admin picks the raks by hand -------------------------------
+  console.log('\n12. Manual pick — the rak-allocation endpoint suggests oldest first');
+  const manual = await Item.create({ name: 'TEST MANUAL', quantity: 100, price: 5 });
+  const MB1 = await Rak.create({ name: 'Test MB1', code: 'TMB1', capacity: 60 });
+  const MB2 = await Rak.create({ name: 'Test MB2', code: 'TMB2', capacity: 60 });
+  const MB3 = await Rak.create({ name: 'Test MB3', code: 'TMB3', capacity: 60 });
+  await place(manual, MB1, 50, 300);   // oldest
+  await place(manual, MB2, 30, 200);
+  await place(manual, MB3, 20, 100);   // newest
+
+  r = await call(orders.createOrder, {
+    user: ADMIN,
+    body: { type: 'sell order', items: [{ item: String(manual._id), quantity: 40 }], customerName: String(customer._id) }
+  });
+  const orderE = r.body.data._id;
+
+  r = await call(orders.getRakAllocation, { user: ADMIN, params: { id: orderE } });
+  check('http', r.status, 200);
+  let alloc = r.body.data.items[0];
+  check('raks offered oldest first', alloc.raks.map((x) => x.rak.code), ['TMB1', 'TMB2', 'TMB3']);
+  check('available per rak', alloc.raks.map((x) => x.available), [50, 30, 20]);
+  check('suggestion is FIFO', alloc.raks.map((x) => x.suggested), [40, 0, 0]);
+  check('no shortfall', alloc.shortfall, 0);
+  check('placedQty', alloc.placedQty, 100);
+
+  console.log('\n13. Admin overrides — takes 20 from TMB3 and 20 from TMB2, skipping the oldest');
+  r = await call(orders.updateOrderStatus, {
+    user: ADMIN,
+    params: { id: orderE },
+    body: {
+      status: 'to roll',
+      rakAllocation: [
+        { item: String(manual._id), rak: String(MB3._id), quantity: 20 },
+        { item: String(manual._id), rak: String(MB2._id), quantity: 20 }
+      ]
+    }
+  });
+  check('http', r.status, 200);
+  check('TMB1 untouched', (await Placement.findOne({ item: manual._id, rak: MB1._id })).quantity, 50);
+  check('TMB2 drawn down', (await Placement.findOne({ item: manual._id, rak: MB2._id })).quantity, 10);
+  check('TMB3 emptied', await Placement.findOne({ item: manual._id, rak: MB3._id }), null);
+  doc = await Order.findById(orderE);
+  check('breakdown follows the picks', doc.rakConsumption.map((c) => String(c.rak)),
+    [String(MB3._id), String(MB2._id)]);
+
+  console.log('\n14. Reverted — the hand-picked raks get their stock back');
+  r = await call(orders.revertOrderStatus, { user: ADMIN, params: { id: orderE } });
+  check('http', r.status, 200);
+  check('TMB2 restored', (await Placement.findOne({ item: manual._id, rak: MB2._id })).quantity, 30);
+  check('TMB3 restored', (await Placement.findOne({ item: manual._id, rak: MB3._id })).quantity, 20);
+
+  console.log('\n15. Bad picks are refused and change nothing');
+  const before = await snapshot();
+  const badPicks = [
+    ['more than was ordered', [
+      { item: String(manual._id), rak: String(MB1._id), quantity: 30 },
+      { item: String(manual._id), rak: String(MB2._id), quantity: 30 }
+    ], 400],
+    ['the same rak twice', [
+      { item: String(manual._id), rak: String(MB1._id), quantity: 10 },
+      { item: String(manual._id), rak: String(MB1._id), quantity: 10 }
+    ], 400],
+    ['an item not on the order', [
+      { item: String(item._id), rak: String(MB1._id), quantity: 5 }
+    ], 400],
+    ['a fractional quantity', [
+      { item: String(manual._id), rak: String(MB1._id), quantity: 2.5 }
+    ], 400],
+    ['a negative quantity', [
+      { item: String(manual._id), rak: String(MB1._id), quantity: -5 }
+    ], 400],
+    ['a garbage rak id', [
+      { item: String(manual._id), rak: 'not-an-id', quantity: 5 }
+    ], 400]
+  ];
+  for (const [label, rakAllocation, expected] of badPicks) {
+    r = await call(orders.updateOrderStatus, {
+      user: ADMIN, params: { id: orderE }, body: { status: 'to roll', rakAllocation }
+    });
+    check(label, r.status, expected);
+  }
+  check('order still pending', (await Order.findById(orderE)).status, 'pending');
+  check('raks untouched', await snapshot(), before);
+
+  console.log('\n16. Picking more than a rak actually holds is refused');
+  r = await call(orders.updateOrderStatus, {
+    user: ADMIN,
+    params: { id: orderE },
+    body: {
+      status: 'to roll',
+      rakAllocation: [{ item: String(manual._id), rak: String(MB3._id), quantity: 40 }]
+    }
+  });
+  check('http', r.status, 409);
+  check('order still pending', (await Order.findById(orderE)).status, 'pending');
+  check('raks untouched', await snapshot(), before);
+
+  console.log('\n17. Taking less than ordered is allowed — the rest was never on a shelf');
+  r = await call(orders.updateOrderStatus, {
+    user: ADMIN,
+    params: { id: orderE },
+    body: {
+      status: 'to roll',
+      rakAllocation: [{ item: String(manual._id), rak: String(MB2._id), quantity: 10 }]
+    }
+  });
+  check('http', r.status, 200);
+  check('TMB2 drawn down by exactly 10', (await Placement.findOne({ item: manual._id, rak: MB2._id })).quantity, 20);
+  doc = await Order.findById(orderE);
+  check('breakdown', doc.rakConsumption.map((c) => c.quantity), [10]);
+  check('consumed flag set', doc.placementsConsumed, true);
+
+  console.log('\n18. Revert after a partial manual pick returns exactly what was taken');
+  r = await call(orders.revertOrderStatus, { user: ADMIN, params: { id: orderE } });
+  check('revert http', r.status, 200);
+  check('TMB2 back to 30', (await Placement.findOne({ item: manual._id, rak: MB2._id })).quantity, 30);
+
+  console.log('\n19. No allocation sent — server still falls back to oldest-first');
+  r = await call(orders.updateOrderStatus, { user: ADMIN, params: { id: orderE }, body: { status: 'to roll' } });
+  check('http', r.status, 200);
+  check('oldest TMB1 drained', (await Placement.findOne({ item: manual._id, rak: MB1._id })).quantity, 10);
+  check('TMB2 untouched', (await Placement.findOne({ item: manual._id, rak: MB2._id })).quantity, 30);
+
+  console.log('\n20. Allocation endpoint rejects a purchase order');
+  r = await call(orders.createOrder, {
+    user: ADMIN,
+    body: { type: 'purchase order', items: [{ item: String(manual._id), quantity: 5 }] }
+  });
+  r = await call(orders.getRakAllocation, { user: ADMIN, params: { id: r.body.data._id } });
+  check('http', r.status, 400);
+
   console.log(`\n${failures ? `${failures} check(s) FAILED` : 'All checks passed'}`);
   await mongoose.connection.dropDatabase();
   console.log(`Dropped ${SCRATCH_DB}.`);
