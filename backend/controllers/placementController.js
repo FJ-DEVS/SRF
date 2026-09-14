@@ -126,8 +126,9 @@ exports.getItemsToPlace = async (req, res) => {
       { $addFields: { placedQty: { $sum: '$placements.quantity' } } },
       {
         $addFields: {
-          // Stock can drop below what is already placed once orders ship,
-          // so clamp at zero rather than showing a negative backlog
+          // Stock can drop below what is already placed in the window between
+          // an order being taken and it reaching "to roll", so clamp at zero
+          // rather than showing a negative backlog
           remainingQty: {
             $max: [{ $subtract: [{ $ifNull: ['$quantity', 0] }, '$placedQty'] }, 0]
           }
