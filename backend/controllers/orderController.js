@@ -8,7 +8,7 @@ const Cargo = require('../models/Cargo');
 const Category = require('../models/Category');
 const axios = require('axios');
 const { getIO } = require('../socket');
-const { consumePlacedStock } = require('../utils/placementMath');
+const { consumePlacedStock, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 
 // Helper function to send OneSignal notification
@@ -195,11 +195,10 @@ exports.createOrder = async (req, res) => {
             message: `Insufficient stock for "${existingItem.name}". Available: ${existingItem.quantity}, Requested: ${requestedQty}`
           });
         }
-
-        // The stock that just left also leaves whichever rak(s) it was sitting
-        // in, so the rak never shows more placed than physically remains.
-        await consumePlacedStock(itemId, requestedQty, session);
       }
+      // Raks are deliberately left alone here. The goods are committed but
+      // still physically on the shelf until the roller pulls them, which is
+      // what the "to roll" status means — see updateOrderStatus.
     }
 
     // For purchase orders: only validate items exist (pending state — no inventory change).
@@ -264,11 +263,6 @@ exports.createOrder = async (req, res) => {
     );
 
     getIO().emit('orders_updated');
-    if (type === 'sell order') {
-      // Rak occupancy may have just changed underneath the roller's screen
-      getIO().emit('placements_updated');
-      getIO().emit('raks_updated');
-    }
 
     res.status(201).json({
       success: true,
@@ -554,19 +548,68 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     const previousStatus = order.status;
-    order.status = status;
-    await order.save();
 
-    // If purchase order is completed, add items to inventory
-    if (order.type === 'purchase order' && status === 'completed' && previousStatus !== 'completed') {
-      const populatedOrder = await Order.findById(order._id);
-      for (const orderItem of populatedOrder.items) {
-        await Item.findByIdAndUpdate(
-          orderItem.item,
-          { $inc: { quantity: orderItem.quantity } },
-          { new: true }
-        );
+    // Everything that has to move together — the status itself, the rak
+    // deduction for "to roll" and the stock top-up for a completed purchase
+    // order — is written inside one transaction, so a crash can never leave
+    // the raks out of step with the order.
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    let raksChanged = false;
+    try {
+      // Re-read under the transaction. Two people advancing the same order at
+      // once (or a double-tapped button) both passed the checks above against
+      // the same stale copy; whoever gets here second finds the status already
+      // moved and is turned away instead of deducting the raks twice.
+      const fresh = await Order.findById(order._id).session(session);
+      if (!fresh || fresh.status !== previousStatus) {
+        await session.abortTransaction();
+        return res.status(409).json({
+          success: false,
+          message: 'This order was just updated by someone else. Refresh and try again.'
+        });
       }
+
+      fresh.status = status;
+
+      // A sell order leaves its raks the moment it enters the roll queue —
+      // that is when the material is physically pulled off the shelf, not when
+      // the order was taken. Oldest rak first; whatever is not on a rak is
+      // simply not there to relieve. placementsConsumed makes this idempotent
+      // across a revert and a second advance.
+      if (fresh.type === 'sell order' && status === 'to roll' && !fresh.placementsConsumed) {
+        const taken = [];
+        for (const orderItem of fresh.items) {
+          taken.push(...await consumePlacedStock(orderItem.item, orderItem.quantity, session));
+        }
+        fresh.rakConsumption = taken;
+        fresh.placementsConsumed = true;
+        raksChanged = true;
+      }
+
+      await fresh.save({ session });
+
+      // If purchase order is completed, add items to inventory
+      if (fresh.type === 'purchase order' && status === 'completed' && previousStatus !== 'completed') {
+        for (const orderItem of fresh.items) {
+          await Item.findByIdAndUpdate(
+            orderItem.item,
+            { $inc: { quantity: orderItem.quantity } },
+            { session }
+          );
+        }
+      }
+
+      order.status = fresh.status;
+      order.placementsConsumed = fresh.placementsConsumed;
+      order.rakConsumption = fresh.rakConsumption;
+
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction().catch(() => {});
+      throw error;
+    } finally {
+      session.endSession();
     }
 
     // If status is delivered, send WhatsApp message
@@ -590,6 +633,11 @@ exports.updateOrderStatus = async (req, res) => {
     await order.populate(populateOptions);
 
     getIO().emit('orders_updated');
+    if (raksChanged) {
+      // The roller's rak screens are now showing stale occupancy
+      getIO().emit('placements_updated');
+      getIO().emit('raks_updated');
+    }
 
     res.status(200).json({
       success: true,
@@ -817,11 +865,29 @@ exports.revertOrderStatus = async (req, res) => {
       }
     }
 
+    // Undoing the trip into the roll queue puts the material back on the very
+    // raks it came off, so a mis-tapped "advance" costs nothing. Leaving the
+    // order's own stock deduction alone is correct — the order is still live,
+    // it has just gone back to pending.
+    let raksChanged = false;
+    if (order.type === 'sell order' && order.status === 'to roll' && order.placementsConsumed) {
+      await restorePlacedStock(order.rakConsumption, session);
+      order.rakConsumption = [];
+      order.placementsConsumed = false;
+      raksChanged = true;
+    }
+
     order.status = prevStatus;
     await order.save({ session });
 
     await session.commitTransaction();
     session.endSession();
+
+    getIO().emit('orders_updated');
+    if (raksChanged) {
+      getIO().emit('placements_updated');
+      getIO().emit('raks_updated');
+    }
 
     res.status(200).json({
       success: true,
@@ -901,6 +967,7 @@ exports.approveCancellation = async (req, res) => {
     }
 
     // Restore stock for sell orders
+    let raksChanged = false;
     if (order.type === 'sell order') {
       for (const orderItem of order.items) {
         await Item.findByIdAndUpdate(
@@ -908,6 +975,16 @@ exports.approveCancellation = async (req, res) => {
           { $inc: { quantity: orderItem.quantity } },
           { session }
         );
+      }
+
+      // An order cancelled after it reached "to roll" already gave up its rak
+      // space; hand that back too, or the stock would come home as unplaced
+      // and need putting away by hand.
+      if (order.placementsConsumed) {
+        await restorePlacedStock(order.rakConsumption, session);
+        order.rakConsumption = [];
+        order.placementsConsumed = false;
+        raksChanged = true;
       }
     }
 
@@ -917,6 +994,12 @@ exports.approveCancellation = async (req, res) => {
 
     await session.commitTransaction();
     session.endSession();
+
+    getIO().emit('orders_updated');
+    if (raksChanged) {
+      getIO().emit('placements_updated');
+      getIO().emit('raks_updated');
+    }
 
     res.status(200).json({ success: true, message: 'Order cancelled successfully', data: order });
   } catch (error) {

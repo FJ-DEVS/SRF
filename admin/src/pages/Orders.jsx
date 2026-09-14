@@ -913,7 +913,7 @@ const Orders = () => {
         }}
         onConfirm={handleStatusUpdate}
         title="Update Order Status"
-        message={`Move this order from "${selectedOrder?.status}" to "${newStatus}"?`}
+        message={`Move this order from "${selectedOrder?.status}" to "${newStatus}"?${newStatus === 'to roll' ? ' The stock comes off the raks now — oldest rak first.' : ''}`}
         type="info"
         confirmLabel="Update"
       />
@@ -957,7 +957,7 @@ const Orders = () => {
         onClose={() => { setShowRevertModal(false); setSelectedOrder(null); }}
         onConfirm={handleRevertStatus}
         title="Revert Order Status"
-        message={`Revert "${selectedOrder?.status}" back to "${getPrevStatus(selectedOrder?.status, selectedOrder?.type)}"?${selectedOrder?.type === 'purchase order' && selectedOrder?.status === 'completed' ? ' Stock added on completion will be deducted.' : ''}`}
+        message={`Revert "${selectedOrder?.status}" back to "${getPrevStatus(selectedOrder?.status, selectedOrder?.type)}"?${selectedOrder?.type === 'purchase order' && selectedOrder?.status === 'completed' ? ' Stock added on completion will be deducted.' : ''}${selectedOrder?.type === 'sell order' && selectedOrder?.status === 'to roll' ? ' The stock goes back onto the raks it came off.' : ''}`}
         type="warning"
         confirmLabel="Revert"
       />

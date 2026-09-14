@@ -66,6 +66,26 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Set once the order reaches "to roll" and its stock has been taken off the
+  // raks. Guards against a revert-then-advance deducting the same order twice.
+  placementsConsumed: {
+    type: Boolean,
+    default: false
+  },
+  // Which rak gave up how much of which item when that happened, so a revert
+  // or an approved cancellation can put the stock back where it came from.
+  rakConsumption: [{
+    _id: false,
+    item: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Item'
+    },
+    rak: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Rak'
+    },
+    quantity: Number
+  }],
   cargo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Cargo'
