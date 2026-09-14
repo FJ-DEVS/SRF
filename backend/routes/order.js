@@ -28,6 +28,10 @@ router.get('/salesman/:id', salesmanAuthMiddleware, orderController.getOrder);
 router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
 
+// Which raks hold this order's items — Admin only, feeds the "pick the raks"
+// dialog shown on the way to "to roll"
+router.get('/:id/rak-allocation', authMiddleware, orderController.getRakAllocation);
+
 // Orders - Both admin and salesman can access (with restrictions in controller)
 router.post('/', anyAuthMiddleware, orderController.createOrder);
 router.get('/', anyAuthMiddleware, orderController.getAllOrders);

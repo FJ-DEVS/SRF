@@ -83,6 +83,43 @@ const consumePlacedStock = async (itemId, quantity, session) => {
   return taken;
 };
 
+// Takes named quantities out of named raks — the manual counterpart to
+// consumePlacedStock, used when the admin picks the raks by hand on the way to
+// "to roll" instead of letting FIFO decide.
+//
+// Refuses outright if a rak does not hold what is being asked of it: the admin
+// may have been looking at the screen for a while and someone else could have
+// moved that stock in the meantime, and a silent partial deduction would leave
+// the order's breakdown lying about where its goods came from.
+const consumeFromRaks = async (entries = [], session) => {
+  const taken = [];
+
+  for (const entry of entries) {
+    if (entry.quantity <= 0) continue;
+
+    const placement = await Placement.findOne({ item: entry.item, rak: entry.rak }).session(session);
+    if (!placement || placement.quantity < entry.quantity) {
+      const rak = await Rak.findById(entry.rak).select('code').session(session);
+      const held = placement ? placement.quantity : 0;
+      const error = new Error(
+        `Rak ${rak ? rak.code : 'that rak'} only holds ${held} of that item, not ${entry.quantity}. Refresh and pick again.`
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    if (placement.quantity === entry.quantity) {
+      await Placement.deleteOne({ _id: placement._id }).session(session);
+    } else {
+      placement.quantity -= entry.quantity;
+      await placement.save({ session });
+    }
+    taken.push({ item: placement.item, rak: placement.rak, quantity: entry.quantity });
+  }
+
+  return taken;
+};
+
 // The inverse of consumePlacedStock: puts an order's breakdown back into the
 // very raks it was taken from. Used when a "to roll" order is reverted to
 // pending or its cancellation is approved.
@@ -123,5 +160,6 @@ module.exports = {
   remainingForItem,
   freeSpace,
   consumePlacedStock,
+  consumeFromRaks,
   restorePlacedStock
 };

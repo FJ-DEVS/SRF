@@ -8,7 +8,8 @@ const Cargo = require('../models/Cargo');
 const Category = require('../models/Category');
 const axios = require('axios');
 const { getIO } = require('../socket');
-const { consumePlacedStock, restorePlacedStock } = require('../utils/placementMath');
+const Placement = require('../models/Placement');
+const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 
 // Helper function to send OneSignal notification
@@ -494,10 +495,136 @@ exports.getOrder = async (req, res) => {
   }
 };
 
+// What is on the raks for each item of one order, with the oldest-first split
+// already worked out — this is what fills the admin's "pick the raks" dialog
+// before an order is moved to "to roll".
+exports.getRakAllocation = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).populate('items.item', 'name category quantity');
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (order.type !== 'sell order') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only sell orders take stock off the raks'
+      });
+    }
+
+    const items = [];
+    for (const orderItem of order.items) {
+      const itemId = orderItem.item?._id || orderItem.item;
+
+      // Same order consumePlacedStock would walk, so the suggestion below is
+      // exactly what happens if the admin changes nothing
+      const placements = await Placement.find({ item: itemId })
+        .populate('rak', 'name code capacity')
+        .sort({ createdAt: 1, _id: 1 });
+
+      let left = orderItem.quantity;
+      const raks = placements
+        .filter((p) => p.rak)
+        .map((p) => {
+          const suggested = Math.min(p.quantity, left);
+          left -= suggested;
+          return {
+            rak: p.rak,
+            available: p.quantity,
+            suggested,
+            placedAt: p.createdAt,
+            placedByName: p.placedByName
+          };
+        });
+
+      items.push({
+        item: orderItem.item,
+        quantity: orderItem.quantity,
+        placedQty: raks.reduce((sum, r) => sum + r.available, 0),
+        // What the raks cannot cover — that stock was never put away, so there
+        // is nothing to take off a shelf for it
+        shortfall: left,
+        raks
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId: order._id,
+        status: order.status,
+        alreadyConsumed: order.placementsConsumed,
+        items
+      }
+    });
+
+  } catch (error) {
+    console.error('Get rak allocation error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// Checks the admin's hand-picked rak quantities against the order before any of
+// it reaches the database. Returns { entries } for the picks to apply, entries
+// null when the caller sent none (meaning: fall back to oldest-first), or
+// { error } with a message to hand back.
+//
+// Taking less than was ordered is allowed on purpose — an item may only be
+// part-placed, and the rest simply never sat on a shelf.
+const parseRakAllocation = (raw, order) => {
+  if (raw === undefined || raw === null) return { entries: null };
+  if (!Array.isArray(raw)) return { error: 'Rak selection must be a list' };
+
+  const orderedByItem = new Map();
+  for (const orderItem of order.items) {
+    const key = String(orderItem.item?._id || orderItem.item);
+    orderedByItem.set(key, (orderedByItem.get(key) || 0) + orderItem.quantity);
+  }
+
+  const seen = new Set();
+  const runningByItem = new Map();
+  const entries = [];
+
+  for (const row of raw) {
+    const item = String(row?.item || '');
+    const rak = String(row?.rak || '');
+    const quantity = Number(row?.quantity);
+
+    if (!mongoose.Types.ObjectId.isValid(item) || !mongoose.Types.ObjectId.isValid(rak)) {
+      return { error: 'Every rak selection needs a valid item and rak' };
+    }
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      return { error: 'Rak quantities must be whole numbers of zero or more' };
+    }
+    if (quantity === 0) continue;
+
+    const ordered = orderedByItem.get(item);
+    if (ordered === undefined) {
+      return { error: 'Rak selection refers to an item that is not on this order' };
+    }
+
+    const key = `${item}|${rak}`;
+    if (seen.has(key)) {
+      return { error: 'The same rak is listed twice for one item' };
+    }
+    seen.add(key);
+
+    const running = (runningByItem.get(item) || 0) + quantity;
+    if (running > ordered) {
+      return { error: `That takes ${running} off the raks but only ${ordered} was ordered` };
+    }
+    runningByItem.set(item, running);
+
+    entries.push({ item, rak, quantity });
+  }
+
+  return { entries };
+};
+
 // Update order status
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, rakAllocation } = req.body;
 
     const order = await Order.findById(req.params.id)
       .populate('customerName');
@@ -549,6 +676,14 @@ exports.updateOrderStatus = async (req, res) => {
 
     const previousStatus = order.status;
 
+    // The admin may hand-pick which raks give the stock up. Anything they did
+    // not send falls through to oldest-first, so the roller app and any other
+    // caller keep working untouched.
+    const { entries: picked, error: pickError } = parseRakAllocation(rakAllocation, order);
+    if (pickError) {
+      return res.status(400).json({ success: false, message: pickError });
+    }
+
     // Everything that has to move together — the status itself, the rak
     // deduction for "to roll" and the stock top-up for a completed purchase
     // order — is written inside one transaction, so a crash can never leave
@@ -578,9 +713,14 @@ exports.updateOrderStatus = async (req, res) => {
       // simply not there to relieve. placementsConsumed makes this idempotent
       // across a revert and a second advance.
       if (fresh.type === 'sell order' && status === 'to roll' && !fresh.placementsConsumed) {
-        const taken = [];
-        for (const orderItem of fresh.items) {
-          taken.push(...await consumePlacedStock(orderItem.item, orderItem.quantity, session));
+        let taken;
+        if (picked) {
+          taken = await consumeFromRaks(picked, session);
+        } else {
+          taken = [];
+          for (const orderItem of fresh.items) {
+            taken.push(...await consumePlacedStock(orderItem.item, orderItem.quantity, session));
+          }
         }
         fresh.rakConsumption = taken;
         fresh.placementsConsumed = true;
@@ -646,8 +786,10 @@ exports.updateOrderStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update order status error:', error);
-    res.status(500).json({ 
+    // A rejected rak pick is the caller's problem, not a server fault — no
+    // point filling the log with a stack trace for it
+    if (!error.status) console.error('Update order status error:', error);
+    res.status(error.status || 500).json({ 
       success: false, 
       message: error.message || 'Internal server error' 
     });
