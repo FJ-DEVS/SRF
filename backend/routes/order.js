@@ -24,13 +24,14 @@ router.get('/consolidation', authMiddleware, orderController.getConsolidationRep
 router.get('/salesman/list', salesmanAuthMiddleware, orderController.getAllOrders);
 router.get('/salesman/:id', salesmanAuthMiddleware, orderController.getOrder);
 
-// Roller-only list/detail — the controller pins these to "to roll" orders
+// Roller-only list/detail — the controller pins these to "to roll" / "rolled" orders
 router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
+router.get('/roller/filters', rollerAuthMiddleware, orderController.getRollerFilterOptions);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
 
-// Which raks hold this order's items — Admin only, feeds the "pick the raks"
-// dialog shown on the way to "to roll"
-router.get('/:id/rak-allocation', authMiddleware, orderController.getRakAllocation);
+// Which raks hold this order's items — feeds the roller's "pick the raks"
+// dialog shown on the way to "rolled"; admins can look too
+router.get('/:id/rak-allocation', roleAuth('admin', 'roller'), orderController.getRakAllocation);
 
 // Orders - Both admin and salesman can access (with restrictions in controller)
 router.post('/', anyAuthMiddleware, orderController.createOrder);

@@ -35,8 +35,8 @@ const placedByItem = async (itemIds) => {
 
 // How much of an item is still waiting to be put on a rak.
 // Stock can fall below what is placed — an order deducts stock the moment it
-// is taken, but the goods only leave the rak at "to roll" — so this never goes
-// negative.
+// is taken, but the goods only leave the rak when it is rolled — so this never
+// goes negative.
 const remainingForItem = async (item) => {
   const placed = (await placedByItem([item._id])).get(String(item._id)) || 0;
   return Math.max((item.quantity || 0) - placed, 0);
@@ -44,8 +44,8 @@ const remainingForItem = async (item) => {
 
 const freeSpace = (rak, used = 0) => Math.max((rak.capacity || 0) - used, 0);
 
-// Takes stock of one item back off the raks — called when a sell order reaches
-// "to roll", the point at which the material is physically pulled off the
+// Takes stock of one item back off the raks — called when a sell order is
+// marked "rolled", the point at which the material has physically come off the
 // shelf. Strict FIFO: the rak the stock has been sitting in longest empties
 // first, and _id breaks ties so two rows written in the same millisecond still
 // come out in the order they were inserted.
@@ -84,10 +84,10 @@ const consumePlacedStock = async (itemId, quantity, session) => {
 };
 
 // Takes named quantities out of named raks — the manual counterpart to
-// consumePlacedStock, used when the admin picks the raks by hand on the way to
-// "to roll" instead of letting FIFO decide.
+// consumePlacedStock, used when the roller picks the raks by hand on the way to
+// "rolled" instead of letting FIFO decide.
 //
-// Refuses outright if a rak does not hold what is being asked of it: the admin
+// Refuses outright if a rak does not hold what is being asked of it: the roller
 // may have been looking at the screen for a while and someone else could have
 // moved that stock in the meantime, and a silent partial deduction would leave
 // the order's breakdown lying about where its goods came from.
@@ -121,8 +121,8 @@ const consumeFromRaks = async (entries = [], session) => {
 };
 
 // The inverse of consumePlacedStock: puts an order's breakdown back into the
-// very raks it was taken from. Used when a "to roll" order is reverted to
-// pending or its cancellation is approved.
+// very raks it was taken from. Used when a "rolled" order is reverted back to
+// the roll queue.
 //
 // A rak may have been refilled or shrunk in the meantime, so each row is capped
 // at whatever space is actually free now; anything that does not fit simply

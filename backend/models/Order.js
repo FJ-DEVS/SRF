@@ -66,7 +66,7 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  // Set once the order reaches "to roll" and its stock has been taken off the
+  // Set once the order is marked "rolled" and its stock has been taken off the
   // raks. Guards against a revert-then-advance deducting the same order twice.
   placementsConsumed: {
     type: Boolean,

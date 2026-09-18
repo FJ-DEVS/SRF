@@ -6,7 +6,7 @@ import logo1 from '../assets/logo1.png';
 import { ListChecks, LayoutGrid, LogOut } from 'lucide-react';
 
 const rollerMenu = [
-  { path: '/roller/orders', icon: ListChecks, label: 'To Roll' },
+  { path: '/roller/orders', icon: ListChecks, label: 'Orders' },
   { path: '/roller/placements', icon: LayoutGrid, label: 'Placements' }
 ];
 

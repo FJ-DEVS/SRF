@@ -127,7 +127,7 @@ exports.getItemsToPlace = async (req, res) => {
       {
         $addFields: {
           // Stock can drop below what is already placed in the window between
-          // an order being taken and it reaching "to roll", so clamp at zero
+          // an order being taken and it being rolled, so clamp at zero
           // rather than showing a negative backlog
           remainingQty: {
             $max: [{ $subtract: [{ $ifNull: ['$quantity', 0] }, '$placedQty'] }, 0]
