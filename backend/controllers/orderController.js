@@ -198,8 +198,8 @@ exports.createOrder = async (req, res) => {
         }
       }
       // Raks are deliberately left alone here. The goods are committed but
-      // still physically on the shelf until the roller pulls them, which is
-      // what the "to roll" status means — see updateOrderStatus.
+      // still physically on the shelf until the roller pulls them and marks
+      // the order "rolled" — see updateOrderStatus.
     }
 
     // For purchase orders: only validate items exist (pending state — no inventory change).
@@ -285,10 +285,33 @@ exports.createOrder = async (req, res) => {
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// The only two statuses a roller's list may show
+const ROLLER_STATUSES = ['to roll', 'rolled'];
+
+// Which customers and cargos appear in the roller's list for a status — feeds
+// the filter dropdowns so they only offer values that actually match something
+exports.getRollerFilterOptions = async (req, res) => {
+  try {
+    const status = ROLLER_STATUSES.includes(req.query.status) ? req.query.status : 'to roll';
+    const [customerIds, cargoIds] = await Promise.all([
+      Order.distinct('customerName', { status, customerModel: 'Customer' }),
+      Order.distinct('cargo', { status })
+    ]);
+    const [customers, cargos] = await Promise.all([
+      Customer.find({ _id: { $in: customerIds } }).select('name').sort({ name: 1 }).lean(),
+      Cargo.find({ _id: { $in: cargoIds } }).select('name').sort({ name: 1 }).lean()
+    ]);
+    res.status(200).json({ success: true, data: { customers, cargos } });
+  } catch (error) {
+    console.error('Get roller filter options error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, type, month, year, date, search, sort = 'newest', page = 1, limit = 10 } = req.query;
+    const { status, type, month, year, date, search, customer, cargo, sort = 'newest', page = 1, limit = 10 } = req.query;
 
     const conditions = [];
 
@@ -302,13 +325,15 @@ exports.getAllOrders = async (req, res) => {
       });
     }
 
-    // Rollers only ever see the queue they work on
+    // Rollers only ever see the queue they work on and what they have rolled
     if (req.user.role === 'roller') {
-      conditions.push({ status: 'to roll' });
+      conditions.push({ status: ROLLER_STATUSES.includes(status) ? status : 'to roll' });
     } else if (status) {
       conditions.push({ status });
     }
     if (type) conditions.push({ type });
+    if (customer && mongoose.Types.ObjectId.isValid(customer)) conditions.push({ customerName: customer });
+    if (cargo && mongoose.Types.ObjectId.isValid(cargo)) conditions.push({ cargo });
 
     // Date filters: exact day ("today" / YYYY-MM-DD) wins over month/year
     if (date) {
@@ -473,8 +498,8 @@ exports.getOrder = async (req, res) => {
       }
     }
 
-    // Rollers only see the "to roll" queue
-    if (req.user.role === 'roller' && order.status !== 'to roll') {
+    // Rollers only see the "to roll" queue and what has been rolled
+    if (req.user.role === 'roller' && !ROLLER_STATUSES.includes(order.status)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'
@@ -496,8 +521,8 @@ exports.getOrder = async (req, res) => {
 };
 
 // What is on the raks for each item of one order, with the oldest-first split
-// already worked out — this is what fills the admin's "pick the raks" dialog
-// before an order is moved to "to roll".
+// already worked out — this is what fills the roller's "pick the raks" dialog
+// before an order is marked "rolled".
 exports.getRakAllocation = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id).populate('items.item', 'name category quantity');
@@ -564,8 +589,8 @@ exports.getRakAllocation = async (req, res) => {
   }
 };
 
-// Checks the admin's hand-picked rak quantities against the order before any of
-// it reaches the database. Returns { entries } for the picks to apply, entries
+// Checks the roller's hand-picked rak quantities against the order before any
+// of it reaches the database. Returns { entries } for the picks to apply, entries
 // null when the caller sent none (meaning: fall back to oldest-first), or
 // { error } with a message to hand back.
 //
@@ -676,16 +701,16 @@ exports.updateOrderStatus = async (req, res) => {
 
     const previousStatus = order.status;
 
-    // The admin may hand-pick which raks give the stock up. Anything they did
-    // not send falls through to oldest-first, so the roller app and any other
-    // caller keep working untouched.
+    // The roller may hand-pick which raks give the stock up. Anything they did
+    // not send falls through to oldest-first, so the admin screen and any
+    // other caller keep working untouched.
     const { entries: picked, error: pickError } = parseRakAllocation(rakAllocation, order);
     if (pickError) {
       return res.status(400).json({ success: false, message: pickError });
     }
 
     // Everything that has to move together — the status itself, the rak
-    // deduction for "to roll" and the stock top-up for a completed purchase
+    // deduction for "rolled" and the stock top-up for a completed purchase
     // order — is written inside one transaction, so a crash can never leave
     // the raks out of step with the order.
     const session = await mongoose.startSession();
@@ -707,12 +732,13 @@ exports.updateOrderStatus = async (req, res) => {
 
       fresh.status = status;
 
-      // A sell order leaves its raks the moment it enters the roll queue —
-      // that is when the material is physically pulled off the shelf, not when
-      // the order was taken. Oldest rak first; whatever is not on a rak is
-      // simply not there to relieve. placementsConsumed makes this idempotent
-      // across a revert and a second advance.
-      if (fresh.type === 'sell order' && status === 'to roll' && !fresh.placementsConsumed) {
+      // A sell order leaves its raks when the roller marks it rolled — that is
+      // the moment the material has physically come off the shelf, not when
+      // the order was taken or queued. Oldest rak first unless the roller
+      // picked otherwise; whatever is not on a rak is simply not there to
+      // relieve. placementsConsumed makes this idempotent across a revert and
+      // a second advance.
+      if (fresh.type === 'sell order' && status === 'rolled' && !fresh.placementsConsumed) {
         let taken;
         if (picked) {
           taken = await consumeFromRaks(picked, session);
@@ -1007,12 +1033,12 @@ exports.revertOrderStatus = async (req, res) => {
       }
     }
 
-    // Undoing the trip into the roll queue puts the material back on the very
-    // raks it came off, so a mis-tapped "advance" costs nothing. Leaving the
-    // order's own stock deduction alone is correct — the order is still live,
-    // it has just gone back to pending.
+    // Undoing "rolled" puts the material back on the very raks it came off, so
+    // a mis-tapped button costs nothing. Leaving the order's own stock
+    // deduction alone is correct — the order is still live, it has just gone
+    // back to the roll queue.
     let raksChanged = false;
-    if (order.type === 'sell order' && order.status === 'to roll' && order.placementsConsumed) {
+    if (order.type === 'sell order' && order.status === 'rolled' && order.placementsConsumed) {
       await restorePlacedStock(order.rakConsumption, session);
       order.rakConsumption = [];
       order.placementsConsumed = false;
@@ -1119,9 +1145,10 @@ exports.approveCancellation = async (req, res) => {
         );
       }
 
-      // An order cancelled after it reached "to roll" already gave up its rak
-      // space; hand that back too, or the stock would come home as unplaced
-      // and need putting away by hand.
+      // Cancellation stops at "to roll" today, before any rak is touched, so
+      // this is a guard: should an order that already gave up its rak space
+      // ever be cancelled, hand that back too, or the stock would come home
+      // as unplaced and need putting away by hand.
       if (order.placementsConsumed) {
         await restorePlacedStock(order.rakConsumption, session);
         order.rakConsumption = [];

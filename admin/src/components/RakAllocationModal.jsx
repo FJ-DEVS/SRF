@@ -17,10 +17,10 @@ const suggestionFor = (items) => {
   return next;
 };
 
-// Shown on the way from "pending" to "to roll" — the one moment an order's
-// stock physically leaves the shelves. The oldest rak is pre-filled so the
-// common case is a single tap, but the admin can move the numbers around if the
-// goods are actually being pulled from somewhere else.
+// Shown when the roller marks an order "rolled" — the moment its stock has
+// physically left the shelves. The oldest rak is pre-filled so the common case
+// is a single tap, but the roller can move the numbers around if the goods
+// were actually pulled from somewhere else.
 const RakAllocationModal = ({ isOpen, onClose, order, onConfirm, submitting, showAlert }) => {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -92,7 +92,7 @@ const RakAllocationModal = ({ isOpen, onClose, order, onConfirm, submitting, sho
           <div className="min-w-0">
             <h3 className="srf-modal-title">Which raks is this coming off?</h3>
             <p className="mt-0.5 truncate text-[12px] text-slate-500">
-              {order.customerName?.name || 'This order'} · moving to “to roll”
+              {order.customerName?.name || 'This order'} · marking as rolled
             </p>
           </div>
           <button onClick={onClose} className="srf-icon-btn shrink-0" aria-label="Close">
@@ -109,7 +109,7 @@ const RakAllocationModal = ({ isOpen, onClose, order, onConfirm, submitting, sho
             <>
               <p className="rounded-xl bg-indigo-50/70 px-3 py-2.5 text-[12px] leading-relaxed text-indigo-900">
                 The rak each item has sat in longest is filled in already. Change the
-                numbers if the stock is being pulled from somewhere else.
+                numbers if you pulled the stock from somewhere else.
               </p>
 
               {rows.map((row) => {
@@ -213,7 +213,7 @@ const RakAllocationModal = ({ isOpen, onClose, order, onConfirm, submitting, sho
               disabled={loading || submitting}
               className="srf-btn srf-btn-primary"
             >
-              {submitting ? 'Working…' : 'Move to “to roll”'}
+              {submitting ? 'Working…' : 'Mark rolled'}
             </button>
           </div>
         </div>

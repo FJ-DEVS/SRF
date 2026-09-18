@@ -1,9 +1,9 @@
 // One-off backfill for the change that moved the rak deduction off order
-// creation and onto the "to roll" transition.
+// creation and onto the "rolled" transition.
 //
 // Every sell order that existed before that change already had its stock taken
 // off the raks the moment it was created. Without this flag those orders would
-// be deducted a second time when they advance to "to roll", emptying raks that
+// be deducted a second time when they are marked "rolled", emptying raks that
 // were relieved months ago. Marking them consumed leaves their raks alone.
 //
 //   node migrate-placement-consumption.js          # dry run — reports, changes nothing
@@ -11,7 +11,7 @@
 //
 // RUN THIS BEFORE THE NEW BACKEND GOES LIVE. Legacy orders are recognised by
 // not carrying the field at all, and the first status change under the new code
-// writes the field — so an order advanced to "to roll" before this runs is the
+// writes the field — so an order marked "rolled" before this runs is the
 // one case the backfill cannot catch.
 //
 // Safe to re-run: orders that already carry the flag are skipped, so orders
