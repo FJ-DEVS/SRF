@@ -2,6 +2,12 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
+// Where each staff role signs in; anything else is the admin console
+const LOGIN_PATHS = {
+  roller: '/roller/login',
+  accounts: '/accounts/login'
+};
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -43,7 +49,7 @@ api.interceptors.response.use(
       localStorage.removeItem('token');
       localStorage.removeItem('user');
 
-      const target = role === 'roller' ? '/roller/login' : '/login';
+      const target = LOGIN_PATHS[role] || '/login';
       if (window.location.pathname !== target) {
         window.location.href = target;
       }

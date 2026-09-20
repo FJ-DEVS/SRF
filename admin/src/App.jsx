@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import RollerLayout from './components/RollerLayout';
+import AccountsLayout from './components/AccountsLayout';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -18,9 +19,13 @@ import SchemaLeaderboard from './pages/SchemaLeaderboard';
 import Database from './pages/Database';
 import Raks from './pages/Raks';
 import Rollers from './pages/Rollers';
+import AccountsUsers from './pages/AccountsUsers';
 import RollerLogin from './pages/roller/RollerLogin';
 import RollerOrders from './pages/roller/RollerOrders';
 import RollerPlacements from './pages/roller/RollerPlacements';
+import AccountsLogin from './pages/accounts/AccountsLogin';
+import AccountsDashboard from './pages/accounts/AccountsDashboard';
+import AccountsOrders from './pages/accounts/AccountsOrders';
 
 const Spinner = () => (
   <div className="min-h-screen flex items-center justify-center">
@@ -29,7 +34,11 @@ const Spinner = () => (
 );
 
 // Where a signed-in account belongs when it lands somewhere it shouldn't
-const homeFor = (user) => (user?.role === 'roller' ? '/roller/orders' : '/dashboard');
+const HOME_PATHS = {
+  roller: '/roller/orders',
+  accounts: '/accounts/dashboard'
+};
+const homeFor = (user) => HOME_PATHS[user?.role] || '/dashboard';
 
 const AdminRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -51,6 +60,16 @@ const RollerRoute = ({ children }) => {
   return children;
 };
 
+const AccountsRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/accounts/login" />;
+  if (user.role !== 'accounts') return <Navigate to={homeFor(user)} />;
+
+  return children;
+};
+
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
 
@@ -63,6 +82,7 @@ const adminPages = [
   { path: '/dashboard', element: <Dashboard /> },
   { path: '/salesmen', element: <Salesmen /> },
   { path: '/rollers', element: <Rollers /> },
+  { path: '/accounts-users', element: <AccountsUsers /> },
   { path: '/customers', element: <Customers /> },
   { path: '/vendors', element: <Vendors /> },
   { path: '/items', element: <Items /> },
@@ -78,6 +98,11 @@ const adminPages = [
 const rollerPages = [
   { path: '/roller/orders', element: <RollerOrders /> },
   { path: '/roller/placements', element: <RollerPlacements /> }
+];
+
+const accountsPages = [
+  { path: '/accounts/dashboard', element: <AccountsDashboard /> },
+  { path: '/accounts/orders', element: <AccountsOrders /> }
 ];
 
 function App() {
@@ -112,6 +137,15 @@ function App() {
             }
           />
 
+          <Route
+            path="/accounts/login"
+            element={
+              <PublicRoute>
+                <AccountsLogin />
+              </PublicRoute>
+            }
+          />
+
           {adminPages.map((page) => (
             <Route
               key={page.path}
@@ -136,7 +170,20 @@ function App() {
             />
           ))}
 
+          {accountsPages.map((page) => (
+            <Route
+              key={page.path}
+              path={page.path}
+              element={
+                <AccountsRoute>
+                  <AccountsLayout>{page.element}</AccountsLayout>
+                </AccountsRoute>
+              }
+            />
+          ))}
+
           <Route path="/roller" element={<Navigate to="/roller/orders" />} />
+          <Route path="/accounts" element={<Navigate to="/accounts/dashboard" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Router>

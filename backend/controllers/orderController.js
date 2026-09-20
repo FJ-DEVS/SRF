@@ -691,6 +691,20 @@ exports.updateOrderStatus = async (req, res) => {
       }
     }
 
+    // Accounts manager owns the two desk-side moves: queueing a fresh order
+    // for rolling and billing a rolled one
+    if (req.user.role === 'accounts') {
+      const allowed =
+        (order.status === 'pending' && status === 'to roll') ||
+        (order.status === 'rolled' && status === 'billed');
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: 'Accounts managers can only move orders from "pending" to "to roll" and from "rolled" to "billed"'
+        });
+      }
+    }
+
     // Check valid transition
     if (!validTransitions[order.status] || !validTransitions[order.status].includes(status)) {
       return res.status(400).json({ 
@@ -1112,7 +1126,7 @@ exports.requestCancellation = async (req, res) => {
   }
 };
 
-// Approve cancellation — admin only
+// Approve cancellation — admin and accounts manager
 // Restores stock for sell orders, then marks order cancelled
 exports.approveCancellation = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1207,7 +1221,7 @@ exports.rejectCancellation = async (req, res) => {
   }
 };
 
-// Get dashboard stats (Admin only)
+// Get dashboard stats (Admin and accounts manager)
 exports.getDashboardStats = async (req, res) => {
   try {
     const totalOrders = await Order.countDocuments();
@@ -1216,6 +1230,9 @@ exports.getDashboardStats = async (req, res) => {
     const rolledOrders = await Order.countDocuments({ status: 'rolled' });
     const billedOrders = await Order.countDocuments({ status: 'billed' });
     const deliveredOrders = await Order.countDocuments({ status: 'delivered' });
+    const completedOrders = await Order.countDocuments({ status: 'completed' });
+    const cancellationRequestedOrders = await Order.countDocuments({ status: 'cancellation_requested' });
+    const cancelledOrders = await Order.countDocuments({ status: 'cancelled' });
     
     const totalSalesmen = await Salesman.countDocuments();
     const totalCustomers = await Customer.countDocuments();
@@ -1273,7 +1290,10 @@ exports.getDashboardStats = async (req, res) => {
           toRoll: toRollOrders,
           rolled: rolledOrders,
           billed: billedOrders,
-          delivered: deliveredOrders
+          delivered: deliveredOrders,
+          completed: completedOrders,
+          cancellationRequested: cancellationRequestedOrders,
+          cancelled: cancelledOrders
         },
         salesmen: totalSalesmen,
         customers: totalCustomers,
