@@ -24,6 +24,7 @@ export const generateOrderText = (order) => {
   const date = new Date(order.createdAt).toLocaleDateString();
   const status = formatStatus(order.status);
   const cargoName = order.cargo?.name || 'No Cargo Assigned';
+  const billLine = order.billNumber ? `\nBill No: ${order.billNumber}` : '';
   const createdBy = order.createdByType === 'admin' 
     ? 'Admin' 
     : (order.createdBy?.name || '-');
@@ -40,7 +41,7 @@ Type: ${orderType}
 ${customerLabel}: ${customerName}
 Date: ${date}
 Order by: ${createdBy}
-Status: ${status}
+Status: ${status}${billLine}
 Cargo: ${cargoName}
 
 Items:

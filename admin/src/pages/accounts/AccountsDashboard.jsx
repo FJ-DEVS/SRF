@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
+import { orderTotal, formatMoney, itemsSummary } from '../../utils/orderMath';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import { ShoppingCart, ArrowUpRight, ArrowRight, Send, Receipt, CheckCircle2, ShieldCheck } from 'lucide-react';
 
@@ -245,15 +246,19 @@ const AccountsDashboard = () => {
                     <p className="truncate text-[13px] font-semibold text-slate-800">
                       {order.customerName?.name || 'Unknown party'}
                     </p>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="truncate text-[12px] font-medium text-slate-600">{itemsSummary(order)}</p>
+                    <p className="truncate text-[11px] text-slate-400">
                       {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                       {' · '}
-                      {order.items?.length || 0} item{(order.items?.length || 0) === 1 ? '' : 's'}
-                      {' · '}
                       <span className="capitalize">{order.type}</span>
+                      {' · '}
+                      {order.cargo?.name || 'No cargo'}
                     </p>
                   </div>
-                  <StatusBadge status={order.status} />
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <StatusBadge status={order.status} />
+                    <span className="text-[12px] font-bold tabular-nums text-slate-800">{formatMoney(orderTotal(order))}</span>
+                  </div>
                 </Link>
               ))
             )}

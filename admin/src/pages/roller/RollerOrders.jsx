@@ -4,11 +4,12 @@ import { getSocket } from '../../utils/socket';
 import RakAllocationModal from '../../components/RakAllocationModal';
 import AlertModal from '../../components/AlertModal';
 import Pagination from '../../components/Pagination';
-import StatusBadge from '../../components/StatusBadge';
+import OrderCard from '../../components/OrderCard';
 import SortSelect from '../../components/SortSelect';
+import { formatDate } from '../../utils/orderMath';
 import {
-  Search, RefreshCw, CheckCircle2, ClipboardCheck, Package, X,
-  SlidersHorizontal, Truck, History
+  Search, RefreshCw, CheckCircle2, ClipboardCheck, X,
+  SlidersHorizontal, History
 } from 'lucide-react';
 
 const SORT_OPTIONS = [
@@ -27,12 +28,6 @@ const VIEWS = [
   { value: 'rolled', label: 'Rolled', icon: History }
 ];
 
-const orderQty = (order) =>
-  (order.items || []).reduce((total, oi) => total + (oi.quantity || 0), 0);
-
-const formatDate = (value) =>
-  new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-
 const RollerOrders = () => {
   const [view, setView] = useState('to roll');
   const [orders, setOrders] = useState([]);
@@ -47,7 +42,6 @@ const RollerOrders = () => {
   const [pageSize, setPageSize] = useState(10);
   const [pagination, setPagination] = useState({ total: 0, pages: 0 });
 
-  const [expandedId, setExpandedId] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showRollModal, setShowRollModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -110,7 +104,6 @@ const RollerOrders = () => {
   useEffect(() => {
     setCustomerFilter('');
     setCargoFilter('');
-    setExpandedId(null);
   }, [view]);
 
   // Keep the lists live — someone else rolling an order moves it here too
@@ -290,69 +283,14 @@ const RollerOrders = () => {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {orders.map((order) => {
-            const isOpen = expandedId === order._id;
-            const itemCount = order.items?.length || 0;
-            return (
-              <div key={order._id} className="srf-card overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setExpandedId(isOpen ? null : order._id)}
-                  className="w-full px-3.5 py-3 text-left"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-[15px] font-semibold text-slate-900">
-                        {order.customerName?.name || '—'}
-                      </p>
-                      <p className="mt-0.5 text-[11px] capitalize text-slate-400">
-                        {formatDate(order.createdAt)} · {order.type} · {orderQty(order)} pcs
-                      </p>
-                    </div>
-                    <StatusBadge status={order.status} />
-                  </div>
-
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <span
-                      className={`flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
-                        order.cargo?.name ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-400'
-                      }`}
-                    >
-                      <Truck className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{order.cargo?.name || 'No cargo'}</span>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-slate-400">
-                      {itemCount} item{itemCount === 1 ? '' : 's'} · Tap to {isOpen ? 'hide' : 'view'}
-                    </span>
-                  </div>
-                </button>
-
-                {isOpen && (
-                  <div className="border-t border-slate-100 bg-slate-50/60 px-3.5 py-3">
-                    <p className="srf-mcard-label mb-1.5">Items</p>
-                    <div className="space-y-1.5">
-                      {(order.items || []).map((oi, idx) => (
-                        <div key={oi._id || idx} className="flex items-center justify-between gap-3 text-[13px]">
-                          <span className="flex min-w-0 items-center gap-1.5 text-slate-700">
-                            <Package className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                            <span className="truncate">{oi.item?.name || 'Deleted item'}</span>
-                          </span>
-                          <span className="shrink-0 font-semibold tabular-nums text-slate-900">
-                            × {oi.quantity}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {order.notes && (
-                      <p className="mt-2.5 text-[12px] text-slate-500">
-                        Notes: <span className="font-medium text-slate-700">{order.notes}</span>
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {isQueue ? (
+          {orders.map((order) => (
+            <OrderCard
+              key={order._id}
+              order={order}
+              maxItems={Infinity}
+              className="srf-card overflow-hidden"
+              footer={
+                isQueue ? (
                   <div className="border-t border-slate-100 p-2.5">
                     <button
                       onClick={() => { setSelectedOrder(order); setShowRollModal(true); }}
@@ -367,10 +305,10 @@ const RollerOrders = () => {
                     <CheckCircle2 className="h-3.5 w-3.5 text-violet-500" />
                     Rolled on <span className="font-semibold text-slate-700">{formatDate(order.updatedAt)}</span>
                   </div>
-                )}
-              </div>
-            );
-          })}
+                )
+              }
+            />
+          ))}
 
           <div className="srf-card overflow-hidden">
             <Pagination
