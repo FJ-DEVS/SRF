@@ -6,10 +6,15 @@ import AlertModal from '../components/AlertModal';
 import ShareOrderModal from '../components/ShareOrderModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
-import StatusBadge from '../components/StatusBadge';
+import BillNumberModal from '../components/BillNumberModal';
+import OrderDetailModal from '../components/OrderDetailModal';
+import OrderTable from '../components/OrderTable';
+import OrderCard from '../components/OrderCard';
+import { TYPE_STYLES, typeStyle } from '../utils/orderType';
+import { orderTotal, orderQty } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Download, RefreshCw, RotateCcw, Share2,
-  ShoppingCart, CalendarDays, Truck
+  ShoppingCart, CalendarDays
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -26,41 +31,6 @@ const SORT_OPTIONS = [
   { value: 'qty_desc', label: 'Quantity: high to low' },
   { value: 'qty_asc', label: 'Quantity: low to high' }
 ];
-
-const orderTotal = (order) =>
-  order.items.reduce((total, oi) => total + (oi.item?.price || 0) * oi.quantity, 0);
-
-const orderQty = (order) =>
-  order.items.reduce((total, oi) => total + (oi.quantity || 0), 0);
-
-// Sell and purchase orders sit in the same list — colour tells them apart at a
-// glance: money coming in (indigo) vs. stock coming in (emerald)
-const TYPE_STYLES = {
-  'sell order': {
-    label: 'Sell Order',
-    row: 'bg-indigo-50/40 hover:!bg-indigo-50/70',
-    badge: 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200',
-    dot: 'bg-indigo-500'
-  },
-  'purchase order': {
-    label: 'Purchase Order',
-    row: 'bg-emerald-50/40 hover:!bg-emerald-50/70',
-    badge: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-    dot: 'bg-emerald-500'
-  }
-};
-
-const typeStyle = (type) => TYPE_STYLES[type] || TYPE_STYLES['sell order'];
-
-const TypeBadge = ({ type }) => {
-  const style = typeStyle(type);
-  return (
-    <span className={`srf-badge ${style.badge}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-      {style.label}
-    </span>
-  );
-};
 
 const Orders = () => {
   const [searchParams] = useSearchParams();
@@ -224,9 +194,11 @@ const Orders = () => {
     }
   };
 
-  const handleStatusUpdate = async () => {
+  const handleStatusUpdate = async (billNumber) => {
     try {
-      const response = await api.put(`/orders/${selectedOrder._id}/status`, { status: newStatus });
+      const payload = { status: newStatus };
+      if (newStatus === 'billed') payload.billNumber = billNumber;
+      const response = await api.put(`/orders/${selectedOrder._id}/status`, payload);
       if (response.data.success) {
         fetchOrders();
         setShowStatusModal(false);
@@ -396,6 +368,7 @@ const Orders = () => {
       'Total Qty': orderQty(order),
       'Total Amount': orderTotal(order),
       'Status': order.status,
+      'Bill No': order.billNumber || '-',
       'Cargo': order.cargo?.name || '-',
       'Created By': order.createdByType === 'admin' ? 'Admin' : (order.createdBy?.name || '-')
     }));
@@ -411,6 +384,11 @@ const Orders = () => {
   };
 
   /* ---------- Row actions ---------- */
+
+  const openDetail = (order) => {
+    setSelectedOrder(order);
+    setShowDetailModal(true);
+  };
 
   const rowActions = (order) => (
     <>
@@ -617,86 +595,19 @@ const Orders = () => {
           <>
             {/* Desktop table */}
             <div className="hidden lg:block">
-              <table className="srf-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Customer</th>
-                    <th>Status</th>
-                    <th>Cargo</th>
-                    <th className="text-right">Total</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map((order) => (
-                    <tr
-                      key={order._id}
-                      className={`cursor-pointer ${typeStyle(order.type).row}`}
-                      onClick={() => { setSelectedOrder(order); setShowDetailModal(true); }}
-                    >
-                      <td className="whitespace-nowrap">
-                        {new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                      </td>
-                      <td className="max-w-[240px]">
-                        <p className="truncate font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <TypeBadge type={order.type} />
-                          <span className="text-[11px] text-slate-400">{orderQty(order)} pcs</span>
-                        </div>
-                      </td>
-                      <td><StatusBadge status={order.status} /></td>
-                      <td className="max-w-[140px] truncate">{order.cargo?.name || '—'}</td>
-                      <td className="whitespace-nowrap text-right font-semibold text-slate-800">
-                        ₹{orderTotal(order).toLocaleString('en-IN')}
-                      </td>
-                      <td>
-                        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                          {rowActions(order)}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <OrderTable orders={orders} onRowClick={openDetail} renderActions={rowActions} />
             </div>
 
             {/* Mobile list */}
             <div className="divide-y divide-slate-100 lg:hidden">
               {orders.map((order) => (
-                <div
+                <OrderCard
                   key={order._id}
-                  className={`p-3.5 ${typeStyle(order.type).row}`}
-                  onClick={() => { setSelectedOrder(order); setShowDetailModal(true); }}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
-                        {new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                        {' · '}{orderQty(order)} pcs
-                      </p>
-                      <div className="mt-1">
-                        <TypeBadge type={order.type} />
-                      </div>
-                    </div>
-                    <StatusBadge status={order.status} />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2 text-xs text-slate-500">
-                      <span className="font-semibold text-slate-800">₹{orderTotal(order).toLocaleString('en-IN')}</span>
-                      {order.cargo?.name && (
-                        <span className="flex min-w-0 items-center gap-1 truncate">
-                          <Truck className="h-3 w-3 shrink-0 text-slate-300" />
-                          <span className="truncate">{order.cargo.name}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                      {rowActions(order)}
-                    </div>
-                  </div>
-                </div>
+                  order={order}
+                  className={typeStyle(order.type).row}
+                  onClick={() => openDetail(order)}
+                  actions={rowActions(order)}
+                />
               ))}
             </div>
 
@@ -903,9 +814,9 @@ const Orders = () => {
         </div>
       )}
 
-      {/* Status Update Modal */}
+      {/* Status Update Modal — billing goes through the bill-number dialog below instead */}
       <ConfirmModal
-        isOpen={showStatusModal}
+        isOpen={showStatusModal && newStatus !== 'billed'}
         onClose={() => {
           setShowStatusModal(false);
           setSelectedOrder(null);
@@ -916,6 +827,17 @@ const Orders = () => {
         message={`Move this order from "${selectedOrder?.status}" to "${newStatus}"?${selectedOrder?.type === 'sell order' && newStatus === 'rolled' ? ' The stock comes off the raks now — oldest rak first.' : ''}`}
         type="info"
         confirmLabel="Update"
+      />
+
+      <BillNumberModal
+        isOpen={showStatusModal && newStatus === 'billed'}
+        onClose={() => {
+          setShowStatusModal(false);
+          setSelectedOrder(null);
+          setNewStatus('');
+        }}
+        onConfirm={handleStatusUpdate}
+        message='Move this order from "rolled" to "billed"? Enter the bill number to continue.'
       />
 
       {/* Delete Confirmation Modal */}
@@ -963,135 +885,23 @@ const Orders = () => {
       />
 
       {/* Order Detail Modal */}
-      {showDetailModal && selectedOrder && (
-        <div className="srf-modal-backdrop" onClick={() => setShowDetailModal(false)}>
-          <div className="srf-modal-panel max-w-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="srf-modal-header">
-              <div className="min-w-0">
-                <h3 className="srf-modal-title">Order Details</h3>
-                <p className="text-[11px] text-slate-400">
-                  {new Date(selectedOrder.createdAt).toLocaleString('en-IN', {
-                    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                  })}
-                </p>
-              </div>
-              <button onClick={() => setShowDetailModal(false)} className="srf-icon-btn shrink-0">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="srf-modal-body space-y-4">
-              {/* Summary row */}
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge status={selectedOrder.status} />
-                <TypeBadge type={selectedOrder.type} />
-                {selectedOrder.cargo?.name && (
-                  <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">
-                    <Truck className="h-3 w-3" /> {selectedOrder.cargo.name}
-                  </span>
-                )}
-                <span className="ml-auto text-[11px] text-slate-400">
-                  ID: <span className="font-mono">{selectedOrder._id.slice(-8)}</span>
-                </span>
-              </div>
-
-              {/* Party info */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  {selectedOrder.type === 'purchase order' ? 'Vendor' : 'Customer'}
-                </p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">{selectedOrder.customerName?.name || '—'}</p>
-                <div className="mt-0.5 flex flex-wrap gap-x-4 text-xs text-slate-500">
-                  {selectedOrder.customerName?.phone && <span>{selectedOrder.customerName.phone}</span>}
-                  {selectedOrder.customerName?.gstin && <span>GSTIN: {selectedOrder.customerName.gstin}</span>}
-                </div>
-              </div>
-
-              {/* Items table */}
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Order Items ({selectedOrder.items.length})
-                </p>
-                <div className="overflow-hidden rounded-xl border border-slate-200">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50/80">
-                        <th className="px-3.5 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Item</th>
-                        <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Price</th>
-                        <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Qty</th>
-                        <th className="px-3.5 py-2 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {selectedOrder.items.map((orderItem, index) => (
-                        <tr key={index}>
-                          <td className="px-3.5 py-2.5 text-[13px] font-medium text-slate-800">
-                            {orderItem.item?.name || 'Unknown Item'}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2.5 text-right text-[13px] text-slate-600">
-                            ₹{(orderItem.item?.price || 0).toLocaleString('en-IN')}
-                          </td>
-                          <td className="whitespace-nowrap px-3 py-2.5 text-right text-[13px] font-semibold text-slate-800">
-                            {orderItem.quantity}
-                          </td>
-                          <td className="whitespace-nowrap px-3.5 py-2.5 text-right text-[13px] font-semibold text-slate-900">
-                            ₹{((orderItem.item?.price || 0) * orderItem.quantity).toLocaleString('en-IN')}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-slate-200 bg-slate-50/80">
-                        <td className="px-3.5 py-2.5 text-[13px] font-bold text-slate-900">Total</td>
-                        <td />
-                        <td className="px-3 py-2.5 text-right text-[13px] font-bold text-slate-900">
-                          {orderQty(selectedOrder)}
-                        </td>
-                        <td className="px-3.5 py-2.5 text-right font-display text-sm font-bold text-indigo-600">
-                          ₹{orderTotal(selectedOrder).toLocaleString('en-IN')}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              {/* Created by + notes */}
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
-                <span>
-                  Created by{' '}
-                  <span className="font-semibold text-slate-700">
-                    {selectedOrder.createdByType === 'admin' ? 'Admin' : (selectedOrder.createdBy?.name || '—')}
-                  </span>
-                </span>
-              </div>
-
-              {selectedOrder.notes && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">Notes</p>
-                  <p className="mt-1 whitespace-pre-wrap text-[13px] text-amber-900">{selectedOrder.notes}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="srf-modal-footer">
-              <button onClick={() => setShowDetailModal(false)} className="srf-btn srf-btn-secondary">
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  setShowDetailModal(false);
-                  handleEdit(selectedOrder);
-                }}
-                className="srf-btn srf-btn-primary"
-              >
-                <Edit2 className="h-3.5 w-3.5" />
-                Edit Order
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <OrderDetailModal
+        isOpen={showDetailModal}
+        onClose={() => setShowDetailModal(false)}
+        order={selectedOrder}
+        actions={selectedOrder && (
+          <button
+            onClick={() => {
+              setShowDetailModal(false);
+              handleEdit(selectedOrder);
+            }}
+            className="srf-btn srf-btn-primary"
+          >
+            <Edit2 className="h-3.5 w-3.5" />
+            Edit Order
+          </button>
+        )}
+      />
 
       {/* Share Order Modal */}
       <ShareOrderModal

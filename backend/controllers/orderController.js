@@ -649,7 +649,7 @@ const parseRakAllocation = (raw, order) => {
 // Update order status
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status, rakAllocation } = req.body;
+    const { status, rakAllocation, billNumber } = req.body;
 
     const order = await Order.findById(req.params.id)
       .populate('customerName');
@@ -713,6 +713,16 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
+    // Billing is the one move that carries data with it: the bill number has
+    // to be typed in by whoever bills the order, whatever their role.
+    const bill = String(billNumber ?? '').trim();
+    if (status === 'billed' && !/^\d{1,10}$/.test(bill)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A bill number (digits only) is required to mark an order as billed'
+      });
+    }
+
     const previousStatus = order.status;
 
     // The roller may hand-pick which raks give the stock up. Anything they did
@@ -745,6 +755,7 @@ exports.updateOrderStatus = async (req, res) => {
       }
 
       fresh.status = status;
+      if (status === 'billed') fresh.billNumber = bill;
 
       // A sell order leaves its raks when the roller marks it rolled — that is
       // the moment the material has physically come off the shelf, not when
@@ -781,6 +792,7 @@ exports.updateOrderStatus = async (req, res) => {
       }
 
       order.status = fresh.status;
+      order.billNumber = fresh.billNumber;
       order.placementsConsumed = fresh.placementsConsumed;
       order.rakConsumption = fresh.rakConsumption;
 
@@ -1058,6 +1070,10 @@ exports.revertOrderStatus = async (req, res) => {
       order.placementsConsumed = false;
       raksChanged = true;
     }
+
+    // Undoing "billed" voids the bill number typed in for it; the next billing
+    // pass asks for one afresh.
+    if (order.status === 'billed') order.billNumber = null;
 
     order.status = prevStatus;
     await order.save({ session });

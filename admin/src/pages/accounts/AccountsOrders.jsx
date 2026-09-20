@@ -3,16 +3,17 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
 import ConfirmModal from '../../components/ConfirmModal';
+import BillNumberModal from '../../components/BillNumberModal';
 import AlertModal from '../../components/AlertModal';
 import OrderDetailModal from '../../components/OrderDetailModal';
 import Pagination from '../../components/Pagination';
 import PageHeader from '../../components/PageHeader';
-import StatusBadge from '../../components/StatusBadge';
-import TypeBadge from '../../components/TypeBadge';
+import OrderTable from '../../components/OrderTable';
+import OrderCard from '../../components/OrderCard';
 import { typeStyle } from '../../utils/orderType';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import {
-  Search, X, Eye, RefreshCw, CalendarDays, Truck, ShoppingCart,
+  Search, X, Eye, RefreshCw, CalendarDays, ShoppingCart,
   Send, Receipt, CheckCircle2
 } from 'lucide-react';
 
@@ -44,12 +45,6 @@ const STATUS_TABS = [
   { value: 'cancellation_requested', countKey: 'cancellationRequested' },
   { value: 'cancelled', countKey: 'cancelled' }
 ];
-
-const orderTotal = (order) =>
-  order.items.reduce((total, oi) => total + (oi.item?.price || 0) * oi.quantity, 0);
-
-const orderQty = (order) =>
-  order.items.reduce((total, oi) => total + (oi.quantity || 0), 0);
 
 // The only things an accounts manager may do to an order. Anything else is
 // view-only here (and refused by the server).
@@ -86,7 +81,7 @@ const moveFor = (order) => {
       icon: Receipt,
       className: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100',
       title: 'Mark as Billed',
-      message: (name) => `Mark ${name}'s order as billed?`,
+      message: (name) => `Enter the bill number to mark ${name}'s order as billed.`,
       modalType: 'info'
     };
   }
@@ -189,13 +184,15 @@ const AccountsOrders = () => {
     fetchCounts();
   };
 
-  const confirmMove = async () => {
+  const confirmMove = async (billNumber) => {
     const { order, move } = pendingMove;
     try {
       if (move.kind === 'approve') {
         await api.put(`/orders/${order._id}/cancel-approve`);
       } else {
-        await api.put(`/orders/${order._id}/status`, { status: move.to });
+        const payload = { status: move.to };
+        if (move.to === 'billed') payload.billNumber = billNumber;
+        await api.put(`/orders/${order._id}/status`, payload);
       }
       setShowDetailModal(false);
       setSelectedOrder(null);
@@ -225,6 +222,19 @@ const AccountsOrders = () => {
       </button>
     );
   };
+
+  const rowActions = (order) => (
+    <>
+      {moveButton(order)}
+      <button
+        onClick={() => openDetail(order)}
+        className="srf-row-action text-indigo-500 hover:bg-indigo-50"
+        title="View Details"
+      >
+        <Eye className="h-4 w-4" />
+      </button>
+    </>
+  );
 
   const hasFilters = Boolean(searchTerm || statusFilter || typeFilter || monthFilter || yearFilter || todayOnly);
 
@@ -366,93 +376,19 @@ const AccountsOrders = () => {
           <>
             {/* Desktop table */}
             <div className="hidden lg:block">
-              <table className="srf-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Customer</th>
-                    <th>Status</th>
-                    <th>Cargo</th>
-                    <th className="text-right">Total</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map((order) => (
-                    <tr
-                      key={order._id}
-                      className={`cursor-pointer ${typeStyle(order.type).row}`}
-                      onClick={() => openDetail(order)}
-                    >
-                      <td className="whitespace-nowrap">
-                        {new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                      </td>
-                      <td className="max-w-[240px]">
-                        <p className="truncate font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <TypeBadge type={order.type} />
-                          <span className="text-[11px] text-slate-400">{orderQty(order)} pcs</span>
-                        </div>
-                      </td>
-                      <td><StatusBadge status={order.status} /></td>
-                      <td className="max-w-[140px] truncate">{order.cargo?.name || '—'}</td>
-                      <td className="whitespace-nowrap text-right font-semibold text-slate-800">
-                        ₹{orderTotal(order).toLocaleString('en-IN')}
-                      </td>
-                      <td>
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          {moveButton(order)}
-                          <button
-                            onClick={() => openDetail(order)}
-                            className="srf-row-action text-indigo-500 hover:bg-indigo-50"
-                            title="View Details"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <OrderTable orders={orders} onRowClick={openDetail} renderActions={rowActions} />
             </div>
 
             {/* Mobile list */}
             <div className="divide-y divide-slate-100 lg:hidden">
               {orders.map((order) => (
-                <div
+                <OrderCard
                   key={order._id}
-                  className={`p-3.5 ${typeStyle(order.type).row}`}
+                  order={order}
+                  className={typeStyle(order.type).row}
                   onClick={() => openDetail(order)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{order.customerName?.name || '—'}</p>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
-                        {new Date(order.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                        {' · '}{orderQty(order)} pcs
-                      </p>
-                      <div className="mt-1">
-                        <TypeBadge type={order.type} />
-                      </div>
-                    </div>
-                    <StatusBadge status={order.status} />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2 text-xs text-slate-500">
-                      <span className="font-semibold text-slate-800">₹{orderTotal(order).toLocaleString('en-IN')}</span>
-                      {order.cargo?.name && (
-                        <span className="flex min-w-0 items-center gap-1 truncate">
-                          <Truck className="h-3 w-3 shrink-0 text-slate-300" />
-                          <span className="truncate">{order.cargo.name}</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                      {moveButton(order, true)}
-                    </div>
-                  </div>
-                </div>
+                  actions={moveButton(order, true)}
+                />
               ))}
             </div>
 
@@ -478,14 +414,23 @@ const AccountsOrders = () => {
         actions={selectedOrder ? moveButton(selectedOrder) : null}
       />
 
+      {/* Billing asks for the bill number; every other move is a plain confirm */}
       <ConfirmModal
-        isOpen={Boolean(pendingMove)}
+        isOpen={Boolean(pendingMove) && pendingMove.move.to !== 'billed'}
         onClose={() => setPendingMove(null)}
         onConfirm={confirmMove}
         title={pendingMove?.move.title || ''}
         message={pendingMove ? pendingMove.move.message(partyName(pendingMove.order)) : ''}
         type={pendingMove?.move.modalType || 'info'}
         confirmLabel={pendingMove?.move.label || 'Confirm'}
+      />
+
+      <BillNumberModal
+        isOpen={pendingMove?.move.to === 'billed'}
+        onClose={() => setPendingMove(null)}
+        onConfirm={confirmMove}
+        title={pendingMove?.move.title || ''}
+        message={pendingMove ? pendingMove.move.message(partyName(pendingMove.order)) : ''}
       />
 
       <AlertModal

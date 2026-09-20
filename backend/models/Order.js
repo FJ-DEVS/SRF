@@ -66,6 +66,14 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // The bill number typed in by whoever marks the order "billed" — required
+  // for that move, and cleared again if the move is reverted. Kept as a string
+  // so a leading zero survives.
+  billNumber: {
+    type: String,
+    default: null,
+    trim: true
+  },
   // Set once the order is marked "rolled" and its stock has been taken off the
   // raks. Guards against a revert-then-advance deducting the same order twice.
   placementsConsumed: {
