@@ -10,3 +10,14 @@ export const STATUS_COLORS = {
   cancellation_requested: '#e11d48',
   cancelled: '#64748b'
 };
+
+export const STATUS_LABELS = {
+  pending: 'Pending',
+  'to roll': 'To Roll',
+  rolled: 'Rolled',
+  billed: 'Billed',
+  delivered: 'Delivered',
+  completed: 'Completed',
+  cancellation_requested: 'Cancel Requested',
+  cancelled: 'Cancelled'
+};

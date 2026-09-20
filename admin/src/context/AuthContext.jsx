@@ -16,6 +16,12 @@ export const useAuth = () => {
 // below is the fast path; this is the fallback for a dropped socket.
 const SESSION_POLL_MS = 60_000;
 
+// Session-check endpoint per database-backed role
+const VERIFY_PATHS = {
+  roller: '/rollers/verify',
+  accounts: '/accounts/verify'
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -61,6 +67,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = (username, password) => signIn('/admin/login', username, password);
   const loginRoller = (username, password) => signIn('/rollers/login', username, password);
+  const loginAccounts = (username, password) => signIn('/accounts/login', username, password);
 
   const logout = () => {
     setRevokedNotice('');
@@ -92,11 +99,12 @@ export const AuthProvider = ({ children }) => {
   // Fallback path: re-check the session on a timer in case the socket is down.
   // The request itself 401s once the account is gone.
   useEffect(() => {
-    if (user?.role !== 'roller') return;
+    const verifyPath = VERIFY_PATHS[user?.role];
+    if (!verifyPath) return;
 
     const check = async () => {
       try {
-        await api.get('/rollers/verify');
+        await api.get(verifyPath);
       } catch (error) {
         if (error.response?.status === 401) {
           revokeSession(
@@ -114,7 +122,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, login, loginRoller, logout, loading, revokedNotice, setRevokedNotice }}
+      value={{ user, login, loginRoller, loginAccounts, logout, loading, revokedNotice, setRevokedNotice }}
     >
       {children}
     </AuthContext.Provider>

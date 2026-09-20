@@ -1,13 +1,15 @@
 const jwt = require('jsonwebtoken');
 const Salesman = require('../models/Salesman');
 const Roller = require('../models/Roller');
+const AccountsManager = require('../models/AccountsManager');
 
 // Roles whose accounts live in the database. Their token is only honoured while
 // the account is still there, so deleting a staff member from the admin panel
 // kills every session that account has open.
 const ACCOUNT_MODELS = {
   salesman: Salesman,
-  roller: Roller
+  roller: Roller,
+  accounts: AccountsManager
 };
 
 const isAccountActive = async (decoded) => {

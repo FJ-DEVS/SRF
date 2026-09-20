@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck, Disc3, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Disc3, Calculator, ArrowRight } from 'lucide-react';
 import logo1 from '../assets/logo1.png';
 
 const ROLES = [
@@ -19,11 +19,19 @@ const ROLES = [
     text: 'Roll pending orders and place items into raks.',
     accent: 'group-hover:border-emerald-300 group-hover:bg-emerald-50/60',
     iconWrap: 'bg-emerald-50 text-emerald-600 ring-emerald-100'
+  },
+  {
+    path: '/accounts/login',
+    icon: Calculator,
+    title: 'Accounts Manager',
+    text: 'Track every order, queue and bill them, approve cancellations.',
+    accent: 'group-hover:border-amber-300 group-hover:bg-amber-50/60',
+    iconWrap: 'bg-amber-50 text-amber-600 ring-amber-100'
   }
 ];
 
-// Entry point — picks which sign-in screen to send you to, so neither role has
-// to know a URL by heart
+// Entry point — picks which sign-in screen to send you to, so no role has to
+// know a URL by heart
 const Landing = () => (
   <div className="relative flex min-h-dvh flex-col justify-center overflow-hidden bg-slate-50 px-5 py-12">
     <div className="pointer-events-none absolute inset-x-0 top-0 h-56 bg-gradient-to-b from-indigo-100/70 to-transparent" />
