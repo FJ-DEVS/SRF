@@ -288,6 +288,7 @@ const RollerOrders = () => {
               key={order._id}
               order={order}
               maxItems={Infinity}
+              showAmount={false}
               className="srf-card overflow-hidden"
               footer={
                 isQueue ? (
