@@ -245,7 +245,7 @@ const Schemas = () => {
 
   return (
     <div className="srf-page">
-      <PageHeader title="Schema" subtitle="Salesman incentive programs">
+      <PageHeader title="Schema" subtitle="Customer incentive programs">
         <button onClick={() => setShowModal(true)} className="srf-btn srf-btn-primary">
           <Plus className="h-4 w-4" />
           Add Schema

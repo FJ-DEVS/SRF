@@ -14,8 +14,9 @@ import { orderTotal, orderQty, formatMoney, formatDate } from '../utils/orderMat
 //   footer     full-width strip under the body (e.g. a "Mark as rolled" button)
 //   maxItems   lines shown before collapsing the rest into "+N more"
 //   showAmount shows the order total; off for rollers, who only need the work
+//   dividedItems  rules between the item lines, for long lists read off a screen
 //   className  wrapper classes — the caller decides on tint, ring, dividers
-const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3, showAmount = true, className = '' }) => (
+const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3, showAmount = true, dividedItems = false, className = '' }) => (
   <div className={className}>
     <div className={`p-3.5 ${onClick ? 'cursor-pointer' : ''}`} onClick={onClick}>
       <div className="flex items-start justify-between gap-2">
@@ -32,7 +33,7 @@ const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3
       </div>
 
       <div className="mt-2.5 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200/80">
-        <OrderItemsList items={order.items} max={maxItems} />
+        <OrderItemsList items={order.items} max={maxItems} divided={dividedItems} />
       </div>
 
       {order.notes && (

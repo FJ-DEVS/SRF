@@ -1,5 +1,6 @@
 const Schema = require('../models/Schema');
 const Order = require('../models/Order');
+const Customer = require('../models/Customer');
 const Salesman = require('../models/Salesman');
 const Category = require('../models/Category');
 const Item = require('../models/Item');
@@ -32,7 +33,7 @@ const buildTiers = (tiers) =>
       reward: t.reward.trim()
     }));
 
-// Highest tier whose threshold the salesman has reached (null if none).
+// Highest tier whose threshold the customer has reached (null if none).
 const resolveTier = (points, tiers) => {
   const sorted = [...(tiers || [])].sort((a, b) => a.pointsRequired - b.pointsRequired);
   let current = null;
@@ -43,7 +44,7 @@ const resolveTier = (points, tiers) => {
   return current;
 };
 
-// Next tier the salesman has NOT yet reached (null if already at the top).
+// Next tier the customer has NOT yet reached (null if already at the top).
 const nextTier = (points, tiers) => {
   const sorted = [...(tiers || [])].sort((a, b) => a.pointsRequired - b.pointsRequired);
   return sorted.find((tier) => points < tier.pointsRequired) || null;
@@ -77,29 +78,89 @@ const pointsByItemFor = async (schema) => {
   return new Map(items.map((i) => [String(i._id), pointsByCategoryName.get(i.category)]));
 };
 
-// Compute { salesmanId(string) -> points } for a schema, from qualifying orders.
+// Compute, from qualifying orders in the schema period:
+//   totals  { customerId(string) -> points }
+//   sellers { customerId(string) -> Set(salesmanId) } — salesmen who placed
+//           those orders, so a customer can be filtered by who sold to them
+// Points belong to the customer who bought the items, whoever placed the order.
 const computePointsForSchema = async (schema) => {
   const pointsByItem = await pointsByItemFor(schema);
 
   const orders = await Order.find({
     type: 'sell order',
-    createdByType: 'salesman',
+    customerName: { $ne: null },
     status: { $in: COUNTED_STATUSES },
     createdAt: { $gte: schema.fromDate, $lte: schema.toDate }
-  }).select('createdBy items');
+  }).select('customerName items createdBy createdByType');
 
   const totals = new Map();
+  const sellers = new Map();
   for (const order of orders) {
-    const salesmanId = String(order.createdBy);
-    if (!salesmanId) continue;
+    const customerId = String(order.customerName);
     for (const line of order.items) {
       const perUnit = pointsByItem.get(String(line.item));
       if (perUnit === undefined) continue;
       const earned = perUnit * (line.quantity || 0);
-      totals.set(salesmanId, (totals.get(salesmanId) || 0) + earned);
+      totals.set(customerId, (totals.get(customerId) || 0) + earned);
+    }
+    if (order.createdByType === 'salesman' && order.createdBy) {
+      if (!sellers.has(customerId)) sellers.set(customerId, new Set());
+      sellers.get(customerId).add(String(order.createdBy));
     }
   }
-  return totals;
+  return { totals, sellers };
+};
+
+// Ranked rows for every customer who earned points in the schema period.
+// Ranks are global (across all customers) so a filtered view keeps the
+// customer's true standing. Each row lists the salesmen linked to the
+// customer: the assigned one first, then anyone who sold to them in the period.
+const buildLeaderboard = async (schema) => {
+  const { totals, sellers } = await computePointsForSchema(schema);
+  const scoredIds = [...totals.keys()].filter((id) => totals.get(id) > 0);
+  if (scoredIds.length === 0) return [];
+
+  const customers = await Customer.find({ _id: { $in: scoredIds } })
+    .select('name phone assignedSalesman')
+    .lean();
+
+  const salesmanIdsFor = (c) => {
+    const ids = [];
+    if (c.assignedSalesman) ids.push(String(c.assignedSalesman));
+    for (const id of sellers.get(String(c._id)) || []) {
+      if (!ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  };
+
+  const allSalesmanIds = new Set(customers.flatMap(salesmanIdsFor));
+  const salesmen = await Salesman.find({ _id: { $in: [...allSalesmanIds] } })
+    .select('name username')
+    .lean();
+  const salesmanById = new Map(salesmen.map((s) => [String(s._id), s]));
+
+  return customers
+    .map((c) => {
+      const points = totals.get(String(c._id)) || 0;
+      const tier = resolveTier(points, schema.tiers);
+      const upcoming = nextTier(points, schema.tiers);
+      return {
+        customerId: c._id,
+        name: c.name,
+        phone: c.phone,
+        salesmen: salesmanIdsFor(c)
+          .map((id) => salesmanById.get(id))
+          .filter(Boolean)
+          .map((s) => ({ _id: s._id, name: s.name, username: s.username })),
+        points,
+        tier: tier ? tier.reward : null,
+        tierPointsRequired: tier ? tier.pointsRequired : null,
+        nextTier: upcoming ? upcoming.reward : null,
+        pointsToNextTier: upcoming ? Math.max(upcoming.pointsRequired - points, 0) : 0
+      };
+    })
+    .sort((a, b) => b.points - a.points)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
 };
 
 // --- Admin CRUD ----------------------------------------------------------
@@ -267,6 +328,11 @@ exports.deleteSchema = async (req, res) => {
 
 // --- Leaderboard (admin) -------------------------------------------------
 
+const linkedToSalesman = (row, salesmanId) =>
+  row.salesmen.some((s) => String(s._id) === String(salesmanId));
+
+// Customer standings. Optional ?salesman=<id> narrows the list to the
+// customers linked to that salesman (ranks stay global).
 exports.getSchemaLeaderboard = async (req, res) => {
   try {
     const schema = await Schema.findById(req.params.id);
@@ -274,26 +340,12 @@ exports.getSchemaLeaderboard = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Schema not found' });
     }
 
-    const totals = await computePointsForSchema(schema);
+    let rows = await buildLeaderboard(schema);
 
-    const salesmen = await Salesman.find().select('name username phone');
-
-    const rows = salesmen
-      .map((s) => {
-        const points = totals.get(String(s._id)) || 0;
-        const tier = resolveTier(points, schema.tiers);
-        return {
-          salesmanId: s._id,
-          name: s.name,
-          username: s.username,
-          phone: s.phone,
-          points,
-          tier: tier ? tier.reward : null,
-          tierPointsRequired: tier ? tier.pointsRequired : null
-        };
-      })
-      .sort((a, b) => b.points - a.points)
-      .map((row, index) => ({ ...row, rank: index + 1 }));
+    const { salesman } = req.query;
+    if (salesman) {
+      rows = rows.filter((row) => linkedToSalesman(row, salesman));
+    }
 
     res.status(200).json({
       success: true,
@@ -317,6 +369,10 @@ exports.getSchemaLeaderboard = async (req, res) => {
 
 // --- Salesman self view (consumed by the separate salesman app) ----------
 
+// For each running schema: the standings of the customers linked to the
+// logged-in salesman (assigned to them, or sold to by them in the period).
+// Points belong to customers, so the salesman sees how their customers are
+// doing rather than a score of their own.
 exports.getMyStatus = async (req, res) => {
   try {
     const salesmanId = String(req.user.id);
@@ -329,10 +385,8 @@ exports.getMyStatus = async (req, res) => {
 
     const data = [];
     for (const schema of schemas) {
-      const totals = await computePointsForSchema(schema);
-      const points = totals.get(salesmanId) || 0;
-      const current = resolveTier(points, schema.tiers);
-      const upcoming = nextTier(points, schema.tiers);
+      const rows = await buildLeaderboard(schema);
+      const customers = rows.filter((row) => linkedToSalesman(row, salesmanId));
 
       data.push({
         _id: schema._id,
@@ -342,10 +396,7 @@ exports.getMyStatus = async (req, res) => {
         toDate: schema.toDate,
         pointsAllocations: schema.pointsAllocations, // view-only incentive products
         tiers: schema.tiers,                         // view-only achievement table
-        myPoints: points,
-        currentTier: current ? current.reward : null,
-        nextTier: upcoming ? upcoming.reward : null,
-        pointsToNextTier: upcoming ? Math.max(upcoming.pointsRequired - points, 0) : 0
+        customers
       });
     }
 
