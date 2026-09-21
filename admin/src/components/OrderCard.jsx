@@ -13,8 +13,9 @@ import { orderTotal, orderQty, formatMoney, formatDate } from '../utils/orderMat
 //   actions    buttons for the bottom-right corner; clicks there do not open it
 //   footer     full-width strip under the body (e.g. a "Mark as rolled" button)
 //   maxItems   lines shown before collapsing the rest into "+N more"
+//   showAmount shows the order total; off for rollers, who only need the work
 //   className  wrapper classes — the caller decides on tint, ring, dividers
-const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3, className = '' }) => (
+const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3, showAmount = true, className = '' }) => (
   <div className={className}>
     <div className={`p-3.5 ${onClick ? 'cursor-pointer' : ''}`} onClick={onClick}>
       <div className="flex items-start justify-between gap-2">
@@ -46,10 +47,14 @@ const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3
           <CargoBadge cargo={order.cargo} className="min-w-0" />
         </div>
         <p className="shrink-0 whitespace-nowrap text-right">
-          <span className="font-display text-[15px] font-bold tabular-nums text-slate-900">
-            {formatMoney(orderTotal(order))}
+          {showAmount && (
+            <span className="font-display text-[15px] font-bold tabular-nums text-slate-900">
+              {formatMoney(orderTotal(order))}
+            </span>
+          )}
+          <span className={`text-[11px] font-medium tabular-nums text-slate-400 ${showAmount ? 'ml-1.5' : ''}`}>
+            {orderQty(order)} pcs
           </span>
-          <span className="ml-1.5 text-[11px] font-medium tabular-nums text-slate-400">{orderQty(order)} pcs</span>
         </p>
       </div>
 
