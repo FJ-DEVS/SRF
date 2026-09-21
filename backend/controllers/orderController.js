@@ -691,16 +691,17 @@ exports.updateOrderStatus = async (req, res) => {
       }
     }
 
-    // Accounts manager owns the two desk-side moves: queueing a fresh order
-    // for rolling and billing a rolled one
+    // Accounts manager owns the desk-side moves: queueing a fresh sell order
+    // for rolling, billing a rolled one, and completing a purchase order
     if (req.user.role === 'accounts') {
-      const allowed =
-        (order.status === 'pending' && status === 'to roll') ||
-        (order.status === 'rolled' && status === 'billed');
+      const allowed = order.type === 'purchase order'
+        ? (order.status === 'pending' && status === 'completed')
+        : (order.status === 'pending' && status === 'to roll') ||
+          (order.status === 'rolled' && status === 'billed');
       if (!allowed) {
         return res.status(403).json({
           success: false,
-          message: 'Accounts managers can only move orders from "pending" to "to roll" and from "rolled" to "billed"'
+          message: 'Accounts managers can only move sell orders from "pending" to "to roll" and from "rolled" to "billed", and purchase orders from "pending" to "completed"'
         });
       }
     }
