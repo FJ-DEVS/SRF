@@ -17,18 +17,21 @@ const rankBadge = (rank) => {
 const SchemaLeaderboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [schemas, setSchemas] = useState([]);
+  const [salesmen, setSalesmen] = useState([]);
   const [selectedId, setSelectedId] = useState(searchParams.get('schema') || '');
+  const [selectedSalesman, setSelectedSalesman] = useState(searchParams.get('salesman') || '');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetchSchemas();
+    fetchSalesmen();
   }, []);
 
   useEffect(() => {
-    if (selectedId) fetchLeaderboard(selectedId);
+    if (selectedId) fetchLeaderboard(selectedId, selectedSalesman);
     else setResult(null);
-  }, [selectedId]);
+  }, [selectedId, selectedSalesman]);
 
   const fetchSchemas = async () => {
     try {
@@ -44,10 +47,21 @@ const SchemaLeaderboard = () => {
     }
   };
 
-  const fetchLeaderboard = async (id) => {
+  const fetchSalesmen = async () => {
+    try {
+      const response = await api.get('/salesman', { params: { limit: 200 } });
+      if (response.data.success) setSalesmen(response.data.data);
+    } catch (error) {
+      console.error('Error fetching salesmen:', error);
+    }
+  };
+
+  const fetchLeaderboard = async (id, salesman) => {
     try {
       setLoading(true);
-      const response = await api.get(`/schemas/${id}/leaderboard`);
+      const response = await api.get(`/schemas/${id}/leaderboard`, {
+        params: salesman ? { salesman } : {}
+      });
       if (response.data.success) setResult(response.data.data);
     } catch (error) {
       console.error('Error fetching leaderboard:', error);
@@ -57,9 +71,21 @@ const SchemaLeaderboard = () => {
     }
   };
 
+  const syncParams = (schema, salesman) => {
+    const params = {};
+    if (schema) params.schema = schema;
+    if (salesman) params.salesman = salesman;
+    setSearchParams(params);
+  };
+
   const handleSelect = (id) => {
     setSelectedId(id);
-    setSearchParams(id ? { schema: id } : {});
+    syncParams(id, selectedSalesman);
+  };
+
+  const handleSalesmanSelect = (id) => {
+    setSelectedSalesman(id);
+    syncParams(selectedId, id);
   };
 
   const leaderboard = result?.leaderboard || [];
@@ -70,17 +96,32 @@ const SchemaLeaderboard = () => {
 
   return (
     <div className="srf-page">
-      <PageHeader title="Leaderboard" subtitle="Salesman standings for a schema period" />
+      <PageHeader title="Leaderboard" subtitle="Customer standings for a schema period" />
 
-      {/* Schema selector */}
+      {/* Schema + salesman filters */}
       <div className="srf-toolbar">
-        <div className="w-full sm:max-w-sm">
-          <select value={selectedId} onChange={(e) => handleSelect(e.target.value)} className="w-full">
-            <option value="">Select a schema…</option>
-            {schemas.map((s) => (
-              <option key={s._id} value={s._id}>{s.name}</option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+          <div className="w-full sm:max-w-sm">
+            <select value={selectedId} onChange={(e) => handleSelect(e.target.value)} className="w-full">
+              <option value="">Select a schema…</option>
+              {schemas.map((s) => (
+                <option key={s._id} value={s._id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="w-full sm:max-w-xs">
+            <select
+              value={selectedSalesman}
+              onChange={(e) => handleSalesmanSelect(e.target.value)}
+              className="w-full"
+              disabled={!selectedId}
+            >
+              <option value="">All salesmen</option>
+              {salesmen.map((s) => (
+                <option key={s._id} value={s._id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -93,6 +134,9 @@ const SchemaLeaderboard = () => {
               {result.schema.runBy ? ` · Run by ${result.schema.runBy}` : ''}
             </p>
           </div>
+          <p className="text-xs text-slate-400">
+            {leaderboard.length} customer{leaderboard.length === 1 ? '' : 's'} with points
+          </p>
         </div>
       )}
 
@@ -115,8 +159,12 @@ const SchemaLeaderboard = () => {
             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
               <Award className="h-5 w-5" />
             </span>
-            <p className="mt-3 text-sm font-semibold text-slate-700">No salesmen yet</p>
-            <p className="mt-1 text-xs text-slate-400">No qualifying sales in this period.</p>
+            <p className="mt-3 text-sm font-semibold text-slate-700">No customers yet</p>
+            <p className="mt-1 text-xs text-slate-400">
+              {selectedSalesman
+                ? "None of this salesman's customers have earned points in this period."
+                : 'No qualifying sales in this period.'}
+            </p>
           </div>
         ) : (
           <>
@@ -126,6 +174,7 @@ const SchemaLeaderboard = () => {
                 <thead>
                   <tr>
                     <th className="w-16">Rank</th>
+                    <th>Customer</th>
                     <th>Salesman</th>
                     <th className="text-right">Points</th>
                     <th>Tier / Gift</th>
@@ -135,13 +184,18 @@ const SchemaLeaderboard = () => {
                   {leaderboard.map((row) => {
                     const atTop = topTierPoints !== null && row.points >= topTierPoints;
                     return (
-                      <tr key={row.salesmanId} className={atTop ? 'bg-amber-50/60' : ''}>
+                      <tr key={row.customerId} className={atTop ? 'bg-amber-50/60' : ''}>
                         <td>
                           <span className="flex h-6 w-6 items-center justify-center">{rankBadge(row.rank)}</span>
                         </td>
                         <td className="font-semibold text-slate-900">
                           {row.name}
-                          <span className="ml-1.5 text-xs font-normal text-slate-400">@{row.username}</span>
+                          {row.phone && (
+                            <span className="ml-1.5 text-xs font-normal text-slate-400">{row.phone}</span>
+                          )}
+                        </td>
+                        <td className="text-slate-600">
+                          {row.salesmen?.length ? row.salesmen.map((s) => s.name).join(', ') : '—'}
                         </td>
                         <td className="text-right font-semibold text-slate-900">{row.points}</td>
                         <td>
@@ -166,11 +220,16 @@ const SchemaLeaderboard = () => {
               {leaderboard.map((row) => {
                 const atTop = topTierPoints !== null && row.points >= topTierPoints;
                 return (
-                  <div key={row.salesmanId} className={`flex items-center gap-3 p-3.5 ${atTop ? 'bg-amber-50/60' : ''}`}>
+                  <div key={row.customerId} className={`flex items-center gap-3 p-3.5 ${atTop ? 'bg-amber-50/60' : ''}`}>
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center">{rankBadge(row.rank)}</span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{row.name}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">{row.tier || 'No tier yet'}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-400">
+                        {row.tier || 'No tier yet'}
+                        {row.salesmen?.length > 0 && (
+                          <span className="text-slate-300"> · {row.salesmen.map((s) => s.name).join(', ')}</span>
+                        )}
+                      </p>
                     </div>
                     <span className="shrink-0 text-sm font-semibold text-slate-900">{row.points} pts</span>
                   </div>

@@ -6,7 +6,8 @@ import { formatMoney } from '../utils/orderMath';
 // this so nobody has to open an order to learn what is in it.
 //   max         lines shown before collapsing the rest into "+N more"
 //   showAmount  adds the line amount (price × qty) on the right
-const OrderItemsList = ({ items = [], max = 3, showAmount = false, className = '' }) => {
+//   divided     rules between the lines, so long lists cannot be misread
+const OrderItemsList = ({ items = [], max = 3, showAmount = false, divided = false, className = '' }) => {
   if (items.length === 0) {
     return <p className={`text-[12px] italic text-slate-400 ${className}`}>No items</p>;
   }
@@ -14,10 +15,12 @@ const OrderItemsList = ({ items = [], max = 3, showAmount = false, className = '
   const visible = items.slice(0, max);
   const hidden = items.length - visible.length;
 
+  const rowClass = divided ? 'py-2 first:pt-0 last:pb-0' : '';
+
   return (
-    <ul className={`space-y-1 ${className}`}>
+    <ul className={`${divided ? 'divide-y-2 divide-slate-300' : 'space-y-1'} ${className}`}>
       {visible.map((oi, idx) => (
-        <li key={oi._id || idx} className="flex min-w-0 items-center gap-2">
+        <li key={oi._id || idx} className={`flex min-w-0 items-center gap-2 ${rowClass}`}>
           <Package className="h-3.5 w-3.5 shrink-0 text-slate-300" />
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-900">
             {oi.item?.name || 'Deleted item'}
@@ -33,7 +36,7 @@ const OrderItemsList = ({ items = [], max = 3, showAmount = false, className = '
         </li>
       ))}
       {hidden > 0 && (
-        <li className="pl-5.5 text-[11px] font-semibold text-indigo-600">
+        <li className={`pl-5.5 text-[11px] font-semibold text-indigo-600 ${rowClass}`}>
           +{hidden} more item{hidden === 1 ? '' : 's'}
         </li>
       )}

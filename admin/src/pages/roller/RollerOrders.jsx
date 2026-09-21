@@ -289,6 +289,7 @@ const RollerOrders = () => {
               order={order}
               maxItems={Infinity}
               showAmount={false}
+              dividedItems
               className="srf-card overflow-hidden"
               footer={
                 isQueue ? (
