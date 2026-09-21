@@ -14,7 +14,7 @@ import { typeStyle } from '../../utils/orderType';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import {
   Search, X, Eye, RefreshCw, CalendarDays, ShoppingCart,
-  Send, Receipt, CheckCircle2
+  Send, Receipt, CheckCircle2, PackageCheck
 } from 'lucide-react';
 
 const MONTHS = [
@@ -60,7 +60,19 @@ const moveFor = (order) => {
       modalType: 'danger'
     };
   }
-  if (order.type !== 'sell order') return null;
+  if (order.type === 'purchase order') {
+    if (order.status !== 'pending') return null;
+    return {
+      kind: 'status',
+      to: 'completed',
+      label: 'Mark completed',
+      icon: PackageCheck,
+      className: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+      title: 'Mark as Completed',
+      message: (name) => `Mark ${name}'s purchase order as completed? Stock will be added to inventory.`,
+      modalType: 'info'
+    };
+  }
   if (order.status === 'pending') {
     return {
       kind: 'status',
@@ -252,7 +264,7 @@ const AccountsOrders = () => {
     <div className="srf-page">
       <PageHeader
         title="Orders"
-        subtitle="Every order across the team. Queue, bill or approve cancellations — nothing else changes here."
+        subtitle="Every order across the team. Queue, bill, complete purchases or approve cancellations — nothing else changes here."
       >
         <button onClick={handleRefresh} className="srf-btn srf-btn-secondary" title="Refresh">
           <RefreshCw className="h-4 w-4 text-slate-400" />

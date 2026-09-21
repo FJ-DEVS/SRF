@@ -14,7 +14,8 @@ const readAuthMiddleware = roleAuth('admin', 'salesman', 'accounts');
 
 // Status changes are also open to rollers and accounts managers — the
 // controller pins rollers to "to roll" → "rolled" and accounts managers to
-// "pending" → "to roll" and "rolled" → "billed"
+// "pending" → "to roll" and "rolled" → "billed" on sell orders, and
+// "pending" → "completed" on purchase orders
 const statusAuthMiddleware = roleAuth('admin', 'salesman', 'roller', 'accounts');
 
 // Approving a cancellation is shared with accounts managers; rejecting one
