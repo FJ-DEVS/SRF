@@ -94,6 +94,13 @@ const orderSchema = new mongoose.Schema({
     },
     quantity: Number
   }],
+  // When a roller first opened the order in the "to roll" queue — drives the
+  // seen / not-seen styling there. Shared by all rollers; cleared whenever the
+  // order is queued for rolling again so it shows up as new.
+  rollerSeenAt: {
+    type: Date,
+    default: null
+  },
   cargo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Cargo'

@@ -38,6 +38,7 @@ router.get('/salesman/:id', salesmanAuthMiddleware, orderController.getOrder);
 router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
 router.get('/roller/filters', rollerAuthMiddleware, orderController.getRollerFilterOptions);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
+router.put('/roller/:id/seen', rollerAuthMiddleware, orderController.markRollerSeen);
 
 // Which raks hold this order's items — feeds the roller's "pick the raks"
 // dialog shown on the way to "rolled"; admins can look too
@@ -51,8 +52,8 @@ router.get('/:id', readAuthMiddleware, orderController.getOrder);
 // Status update - Admin, salesman, roller and accounts manager (with restrictions in controller)
 router.put('/:id/status', statusAuthMiddleware, orderController.updateOrderStatus);
 
-// Revert status — Admin only
-router.put('/:id/revert-status', authMiddleware, orderController.revertOrderStatus);
+// Revert status — Admin, and rollers for "rolled" → "to roll" (enforced in controller)
+router.put('/:id/revert-status', roleAuth('admin', 'roller'), orderController.revertOrderStatus);
 
 // Cancellation workflow
 router.post('/:id/cancel-request', anyAuthMiddleware, orderController.requestCancellation);
