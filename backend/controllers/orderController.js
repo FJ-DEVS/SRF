@@ -288,11 +288,15 @@ const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The only two statuses a roller's list may show
 const ROLLER_STATUSES = ['to roll', 'rolled'];
 
+// A roller's status param: one of the two, or "all" for both in one list
+const rollerStatusMatch = (status) =>
+  status === 'all' ? { $in: ROLLER_STATUSES } : (ROLLER_STATUSES.includes(status) ? status : 'to roll');
+
 // Which customers and cargos appear in the roller's list for a status — feeds
 // the filter dropdowns so they only offer values that actually match something
 exports.getRollerFilterOptions = async (req, res) => {
   try {
-    const status = ROLLER_STATUSES.includes(req.query.status) ? req.query.status : 'to roll';
+    const status = rollerStatusMatch(req.query.status);
     const [customerIds, cargoIds] = await Promise.all([
       Order.distinct('customerName', { status, customerModel: 'Customer' }),
       Order.distinct('cargo', { status })
@@ -304,6 +308,27 @@ exports.getRollerFilterOptions = async (req, res) => {
     res.status(200).json({ success: true, data: { customers, cargos } });
   } catch (error) {
     console.error('Get roller filter options error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// A roller opened an order in their list — mark it seen for every roller. Only the
+// first open counts, and updatedAt is left alone since nothing about the
+// order itself changed.
+exports.markRollerSeen = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    const result = await Order.updateOne(
+      { _id: req.params.id, status: { $in: ROLLER_STATUSES }, rollerSeenAt: null },
+      { $set: { rollerSeenAt: new Date() } },
+      { timestamps: false }
+    );
+    if (result.modifiedCount) getIO().emit('orders_updated');
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Mark roller seen error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
@@ -327,7 +352,7 @@ exports.getAllOrders = async (req, res) => {
 
     // Rollers only ever see the queue they work on and what they have rolled
     if (req.user.role === 'roller') {
-      conditions.push({ status: ROLLER_STATUSES.includes(status) ? status : 'to roll' });
+      conditions.push({ status: rollerStatusMatch(status) });
     } else if (status) {
       conditions.push({ status });
     }
@@ -757,6 +782,8 @@ exports.updateOrderStatus = async (req, res) => {
 
       fresh.status = status;
       if (status === 'billed') fresh.billNumber = bill;
+      // A (re)queued order is new to the rollers again
+      if (status === 'to roll') fresh.rollerSeenAt = null;
 
       // A sell order leaves its raks when the roller marks it rolled — that is
       // the moment the material has physically come off the shelf, not when
@@ -1014,7 +1041,7 @@ exports.deleteOrder = async (req, res) => {
   }
 };
 
-// Revert order status — admin only
+// Revert order status — admin, and rollers for "rolled" → "to roll" only
 // Moves the order one step backward in the status chain
 exports.revertOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1038,6 +1065,16 @@ exports.revertOrderStatus = async (req, res) => {
         'completed': 'pending'
       }
     };
+
+    // A roller may only take back their own step
+    if (req.user.role === 'roller' && !(order.type === 'sell order' && order.status === 'rolled')) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Rollers can only revert rolled orders back to "to roll"'
+      });
+    }
 
     const prevStatus = revertMap[order.type]?.[order.status];
     if (!prevStatus) {

@@ -50,8 +50,9 @@ const RollerLayout = ({ children }) => {
       </header>
 
       {/* Page content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-6xl px-3 py-3 pb-28 sm:px-5 sm:py-5">
+      <main className={`flex-1 overflow-y-auto ${location.pathname === '/roller/orders' ? 'scrollbar-none' : ''}`}>
+        {/* The orders page runs three panes side by side, so it gets the full width */}
+        <div className={`mx-auto w-full ${location.pathname === '/roller/orders' ? 'max-w-[1600px]' : 'max-w-6xl'} px-3 py-3 pb-28 sm:px-5 sm:py-5`}>
           {children}
         </div>
       </main>
