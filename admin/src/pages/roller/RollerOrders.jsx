@@ -7,7 +7,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import SortSelect from '../../components/SortSelect';
 import {
   Search, CheckCircle2, CircleCheck, ClipboardCheck, X, SlidersHorizontal,
-  Phone, MapPin, Calendar, FileText, ArrowLeft, Truck, Undo2, PanelRightClose
+  Calendar, Package, ArrowLeft, Truck, Undo2, PanelRightClose, UserCheck
 } from 'lucide-react';
 
 const SORT_OPTIONS = [
@@ -26,13 +26,7 @@ const MAX_LIMIT = 100;
 const initials = (name = '') =>
   name.replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 
-// Item names read "10205 SSR - 10": the code, then the size/description
-const splitItemName = (name = '') => {
-  const i = name.indexOf(' - ');
-  return i === -1 ? [name, ''] : [name.slice(0, i), name.slice(i + 3)];
-};
-
-const itemsLine = (order) => (order.items || []).map((oi) => oi.item?.name || 'Deleted item').join(', ');
+const totalQty = (order) => (order.items || []).reduce((sum, oi) => sum + (oi.quantity || 0), 0);
 
 const timeOf = (d) => d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
 
@@ -275,9 +269,9 @@ const OrderRow = ({ order, selected, onSelect }) => {
           </span>
         </span>
         <span className="mt-1 flex items-center gap-2">
-          <span className={`min-w-0 flex-1 truncate text-[12.5px] ${unseen ? 'text-slate-600' : 'text-slate-400'}`}>
-            <span className={unseen ? 'font-semibold text-slate-900' : ''}>{order.items?.length || 0} items</span>
-            {' • '}{itemsLine(order)}
+          <span className={`flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] ${unseen ? 'font-semibold text-slate-700' : 'text-slate-400'}`}>
+            <Truck className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{order.cargo?.name || 'No cargo'}</span>
           </span>
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${style.chip}`}>{style.label}</span>
           {unseen && <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />}
@@ -323,30 +317,13 @@ const OrderDetails = ({ order, title, cardRing, onBack, actions }) => {
       </div>
 
       <div className="scrollbar-none min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3">
-        {/* Customer */}
-        <div className={`flex flex-wrap items-center gap-4 rounded-xl bg-white p-4 ring-1 ${cardRing}`}>
-          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-lg font-bold text-emerald-700">
-            {initials(customer.name)}
-          </span>
-          <div className="min-w-0 flex-1 space-y-1">
-            <p className="truncate text-[16px] font-bold text-slate-900">{customer.name || '—'}</p>
-            {customer.phone && (
-              <p className="flex items-center gap-2 text-[13px] text-slate-600">
-                <Phone className="h-3.5 w-3.5 text-slate-400" />{customer.phone}
-              </p>
-            )}
-            {customer.locationLink && (
-              <a href={customer.locationLink} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-[13px] text-slate-600 hover:text-blue-600">
-                <MapPin className="h-3.5 w-3.5 text-slate-400" />Open location
-              </a>
-            )}
-          </div>
-          <div className="space-y-1.5 border-l border-slate-200 pl-4 text-[13px] text-slate-600">
+        {/* Summary */}
+        <div className={`rounded-xl bg-white p-4 ring-1 ${cardRing}`}>
+          <p className="truncate text-[16px] font-bold text-slate-900">{customer.name || '—'}</p>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] text-slate-600">
             <p className="flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-slate-400" />{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-            <p className="flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-slate-400" />{order.items?.length || 0} Items</p>
-            {order.cargo?.name && (
-              <p className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-slate-400" />{order.cargo.name}</p>
-            )}
+            <p className="flex items-center gap-2"><Package className="h-3.5 w-3.5 text-slate-400" />Total qty <span className="font-semibold tabular-nums text-slate-900">{totalQty(order)}</span></p>
+            <p className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-slate-400" />{order.cargo?.name || 'No cargo'}</p>
           </div>
         </div>
 
@@ -363,25 +340,20 @@ const OrderDetails = ({ order, title, cardRing, onBack, actions }) => {
             <thead>
               <tr className="text-left text-[12px] text-slate-500">
                 <th className="rounded-l-lg bg-slate-50 px-3 py-2 font-medium">#</th>
-                <th className="bg-slate-50 px-3 py-2 font-medium">Item Code</th>
-                <th className="bg-slate-50 px-3 py-2 font-medium">Description</th>
+                <th className="bg-slate-50 px-3 py-2 font-medium">Item</th>
                 <th className="rounded-r-lg bg-slate-50 px-3 py-2 text-right font-medium">Qty</th>
               </tr>
             </thead>
             <tbody>
-              {(order.items || []).map((oi, idx) => {
-                const [code, desc] = splitItemName(oi.item?.name || 'Deleted item');
-                return (
-                  <tr key={oi._id || idx} className="border-b border-slate-100 last:border-0">
-                    <td className="px-3 py-2">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-[11px] text-slate-500">{idx + 1}</span>
-                    </td>
-                    <td className="px-3 py-2 font-semibold text-slate-900">{code}</td>
-                    <td className="px-3 py-2 text-slate-600">{desc || '—'}</td>
-                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-900">{oi.quantity}</td>
-                  </tr>
-                );
-              })}
+              {(order.items || []).map((oi, idx) => (
+                <tr key={oi._id || idx} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-[11px] text-slate-500">{idx + 1}</span>
+                  </td>
+                  <td className="px-3 py-2 font-semibold text-slate-900">{oi.item?.name || 'Deleted item'}</td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-900">{oi.quantity}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -390,6 +362,13 @@ const OrderDetails = ({ order, title, cardRing, onBack, actions }) => {
           <p className="flex items-center gap-1.5 px-1 text-[12px] text-slate-500">
             <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             Rolled on <span className="font-semibold text-slate-700">{fullStamp(order.updatedAt)}</span>
+          </p>
+        )}
+
+        {!isQueue && order.rolledBy && (
+          <p className="flex items-center gap-1.5 px-1 text-[12px] text-slate-500">
+            <UserCheck className="h-4 w-4 text-emerald-600" />
+            Rolled by <span className="font-semibold text-slate-700">{order.rolledBy.name || order.rolledBy.username}</span>
           </p>
         )}
       </div>
@@ -425,6 +404,13 @@ const RollerOrders = () => {
   const fresh = (order) => (order && list.orders.find((o) => o._id === order._id)) || order;
   const detail = fresh(detailOrder);
   const rolled = fresh(rolledOrder);
+
+  // Other "to roll" orders in the list for the picked order's customer, so the
+  // roller can do them together
+  const customerId = detail?.customerName?._id;
+  const sameCustomer = customerId
+    ? list.orders.filter((o) => o._id !== detail._id && o.status === 'to roll' && o.customerName?._id === customerId)
+    : [];
 
   const [showRollModal, setShowRollModal] = useState(false);
   const [showRevertModal, setShowRevertModal] = useState(false);
@@ -551,6 +537,20 @@ const RollerOrders = () => {
 
         {/* 3 — The order just rolled */}
         <section className={`${pane} bg-emerald-50/70 ring-emerald-100 ${paneVisibility('rolled')} lg:flex`}>
+          {sameCustomer.length > 0 && (
+            <div className="m-3 mb-0 flex max-h-[45%] shrink-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-blue-200">
+              <div className="flex shrink-0 items-center gap-2 border-b border-blue-100 bg-blue-50 px-4 py-2.5">
+                <ClipboardCheck className="h-4 w-4 text-blue-600" />
+                <p className="text-[13px] font-semibold text-blue-800">Same customer's orders you might need to see</p>
+                <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">{sameCustomer.length}</span>
+              </div>
+              <div className="scrollbar-none min-h-0 overflow-y-auto">
+                {sameCustomer.map((order) => (
+                  <OrderRow key={order._id} order={order} selected={false} onSelect={() => openOrder(order)} />
+                ))}
+              </div>
+            </div>
+          )}
           {rolled ? (
             <OrderDetails
               order={rolled}
