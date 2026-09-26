@@ -43,6 +43,7 @@ const Orders = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
   const [typeFilter, setTypeFilter] = useState('');
+  const [cargoFilter, setCargoFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear().toString());
   const [sortBy, setSortBy] = useState('newest');
@@ -90,12 +91,12 @@ const Orders = () => {
 
   useEffect(() => {
     fetchOrders();
-  }, [searchTerm, statusFilter, typeFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, typeFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
 
   const fetchOrders = async () => {
     try {
@@ -105,6 +106,7 @@ const Orders = () => {
           search: searchTerm,
           status: statusFilter,
           type: typeFilter,
+          cargo: cargoFilter,
           month: monthFilter,
           year: yearFilter,
           sort: sortBy,
@@ -507,6 +509,11 @@ const Orders = () => {
               <option value="purchase order">Purchase Order</option>
             </select>
 
+            <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
+              <option value="">All cargos</option>
+              {cargo.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+
             <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>
               <option value="">All months</option>
               {MONTHS.map((m, i) => (
@@ -539,13 +546,14 @@ const Orders = () => {
             Today's orders
           </button>
 
-          {(searchTerm || statusFilter || typeFilter || monthFilter || todayOnly) && (
+          {(searchTerm || statusFilter || typeFilter || cargoFilter || monthFilter || todayOnly) && (
             <button
               type="button"
               onClick={() => {
                 setSearchTerm('');
                 setStatusFilter('');
                 setTypeFilter('');
+                setCargoFilter('');
                 setMonthFilter('');
                 setTodayOnly(false);
                 setSortBy('newest');

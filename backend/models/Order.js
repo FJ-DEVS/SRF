@@ -101,6 +101,13 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // The roller who marked the order "rolled"; cleared if that is reverted.
+  // Stays null when an admin or salesman rolls it.
+  rolledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Roller',
+    default: null
+  },
   cargo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Cargo'

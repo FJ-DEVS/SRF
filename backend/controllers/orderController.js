@@ -447,7 +447,8 @@ exports.getAllOrders = async (req, res) => {
       const found = await Order.find({ _id: { $in: ids } })
         .populate('items.item')
         .populate('customerName')
-        .populate('cargo');
+        .populate('cargo')
+        .populate('rolledBy', 'name username');
       const byId = new Map(found.map((o) => [String(o._id), o]));
       orders = ids.map((id) => byId.get(String(id))).filter(Boolean);
     } else {
@@ -455,6 +456,7 @@ exports.getAllOrders = async (req, res) => {
         .populate('items.item')
         .populate('customerName')
         .populate('cargo')
+        .populate('rolledBy', 'name username')
         .sort(sortSpec)
         .skip(skip)
         .limit(limitNum);
@@ -784,6 +786,7 @@ exports.updateOrderStatus = async (req, res) => {
       if (status === 'billed') fresh.billNumber = bill;
       // A (re)queued order is new to the rollers again
       if (status === 'to roll') fresh.rollerSeenAt = null;
+      if (status === 'rolled') fresh.rolledBy = req.user.role === 'roller' ? req.user.id : null;
 
       // A sell order leaves its raks when the roller marks it rolled — that is
       // the moment the material has physically come off the shelf, not when
@@ -823,6 +826,7 @@ exports.updateOrderStatus = async (req, res) => {
       order.billNumber = fresh.billNumber;
       order.placementsConsumed = fresh.placementsConsumed;
       order.rakConsumption = fresh.rakConsumption;
+      order.rolledBy = fresh.rolledBy;
 
       await session.commitTransaction();
     } catch (error) {
@@ -843,7 +847,8 @@ exports.updateOrderStatus = async (req, res) => {
     // Conditionally populate createdBy if it's a salesman
     const populateOptions = [
       { path: 'items.item' },
-      { path: 'cargo' }
+      { path: 'cargo' },
+      { path: 'rolledBy', select: 'name username' }
     ];
     
     if (order.createdByType === 'salesman') {
@@ -1108,6 +1113,7 @@ exports.revertOrderStatus = async (req, res) => {
       order.placementsConsumed = false;
       raksChanged = true;
     }
+    if (order.status === 'rolled') order.rolledBy = null;
 
     // Undoing "billed" voids the bill number typed in for it; the next billing
     // pass asks for one afresh.
