@@ -34,11 +34,11 @@ router.get('/consolidation', authMiddleware, orderController.getConsolidationRep
 router.get('/salesman/list', salesmanAuthMiddleware, orderController.getAllOrders);
 router.get('/salesman/:id', salesmanAuthMiddleware, orderController.getOrder);
 
-// Roller-only list/detail — the controller pins these to "to roll" / "rolled" orders
+// Roller-only list/detail — the controller pins these to sell orders queued for rolling
 router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
-router.get('/roller/filters', rollerAuthMiddleware, orderController.getRollerFilterOptions);
+router.get('/roller/customers', rollerAuthMiddleware, orderController.getRollerCustomers);
+router.put('/roller/customers/:customerId/seen', rollerAuthMiddleware, orderController.markRollerCustomerSeen);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
-router.put('/roller/:id/seen', rollerAuthMiddleware, orderController.markRollerSeen);
 
 // Which raks hold this order's items — feeds the roller's "pick the raks"
 // dialog shown on the way to "rolled"; admins can look too

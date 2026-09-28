@@ -285,50 +285,93 @@ exports.createOrder = async (req, res) => {
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// The only two statuses a roller's list may show
+// The two statuses a roller works on — the only ones they can change or mark seen
 const ROLLER_STATUSES = ['to roll', 'rolled'];
 
-// A roller's status param: one of the two, or "all" for both in one list
-const rollerStatusMatch = (status) =>
-  status === 'all' ? { $in: ROLLER_STATUSES } : (ROLLER_STATUSES.includes(status) ? status : 'to roll');
+// Everything a roller's list may show: every sell order once it has been
+// queued for rolling, including where it went after (billed, completed …)
+const ROLLER_VISIBLE_STATUSES = ['to roll', 'rolled', 'billed', 'delivered', 'completed', 'cancellation_requested', 'cancelled'];
+const rollerVisibleQuery = { type: 'sell order', customerModel: 'Customer', status: { $in: ROLLER_VISIBLE_STATUSES } };
 
-// Which customers and cargos appear in the roller's list for a status — feeds
-// the filter dropdowns so they only offer values that actually match something
-exports.getRollerFilterOptions = async (req, res) => {
+// A roller's status param: one of the visible statuses, or "all" (the default)
+const rollerStatusMatch = (status) =>
+  ROLLER_VISIBLE_STATUSES.includes(status) ? status : { $in: ROLLER_VISIBLE_STATUSES };
+
+// The roller's chat list: one row per customer, most recent order first, with
+// that order as the preview and how many of their "to roll" orders are unseen
+exports.getRollerCustomers = async (req, res) => {
   try {
-    const status = rollerStatusMatch(req.query.status);
-    const [customerIds, cargoIds] = await Promise.all([
-      Order.distinct('customerName', { status, customerModel: 'Customer' }),
-      Order.distinct('cargo', { status })
-    ]);
-    const [customers, cargos] = await Promise.all([
-      Customer.find({ _id: { $in: customerIds } }).select('name').sort({ name: 1 }).lean(),
-      Cargo.find({ _id: { $in: cargoIds } }).select('name').sort({ name: 1 }).lean()
-    ]);
-    res.status(200).json({ success: true, data: { customers, cargos } });
+    const { search } = req.query;
+    const limitNum = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 200);
+
+    const pipeline = [
+      { $match: rollerVisibleQuery },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: '$customerName',
+          lastOrderAt: { $first: '$createdAt' },
+          lastStatus: { $first: '$status' },
+          lastCargo: { $first: '$cargo' },
+          lastQty: { $first: { $sum: '$items.quantity' } },
+          orderCount: { $sum: 1 },
+          toRollCount: { $sum: { $cond: [{ $eq: ['$status', 'to roll'] }, 1, 0] } },
+          unseenCount: {
+            $sum: { $cond: [{ $and: [{ $eq: ['$status', 'to roll'] }, { $eq: [{ $ifNull: ['$rollerSeenAt', null] }, null] }] }, 1, 0] }
+          }
+        }
+      },
+      { $lookup: { from: 'customers', localField: '_id', foreignField: '_id', as: 'customer' } },
+      { $unwind: '$customer' },
+      { $lookup: { from: 'cargos', localField: 'lastCargo', foreignField: '_id', as: 'cargo' } }
+    ];
+    if (search && search.trim()) {
+      pipeline.push({ $match: { 'customer.name': { $regex: escapeRegex(search.trim()), $options: 'i' } } });
+    }
+    pipeline.push(
+      { $sort: { lastOrderAt: -1 } },
+      {
+        $facet: {
+          data: [
+            { $limit: limitNum },
+            {
+              $project: {
+                _id: 1, lastOrderAt: 1, lastStatus: 1, lastQty: 1, orderCount: 1, toRollCount: 1, unseenCount: 1,
+                name: '$customer.name',
+                lastCargoName: { $first: '$cargo.name' }
+              }
+            }
+          ],
+          meta: [{ $count: 'total' }]
+        }
+      }
+    );
+
+    const [result] = await Order.aggregate(pipeline);
+    res.status(200).json({ success: true, data: result.data, total: result.meta[0]?.total || 0 });
   } catch (error) {
-    console.error('Get roller filter options error:', error);
+    console.error('Get roller customers error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
-// A roller opened an order in their list — mark it seen for every roller. Only the
-// first open counts, and updatedAt is left alone since nothing about the
-// order itself changed.
-exports.markRollerSeen = async (req, res) => {
+// A roller opened a customer's chat — every unseen "to roll" order of theirs
+// is now seen, for every roller. updatedAt is left alone since nothing about
+// the orders themselves changed.
+exports.markRollerCustomerSeen = async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ success: false, message: 'Order not found' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.customerId)) {
+      return res.status(404).json({ success: false, message: 'Customer not found' });
     }
-    const result = await Order.updateOne(
-      { _id: req.params.id, status: { $in: ROLLER_STATUSES }, rollerSeenAt: null },
+    const result = await Order.updateMany(
+      { customerName: req.params.customerId, status: { $in: ROLLER_STATUSES }, rollerSeenAt: null },
       { $set: { rollerSeenAt: new Date() } },
       { timestamps: false }
     );
     if (result.modifiedCount) getIO().emit('orders_updated');
     res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Mark roller seen error:', error);
+    console.error('Mark roller customer seen error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
@@ -336,7 +379,7 @@ exports.markRollerSeen = async (req, res) => {
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, type, month, year, date, search, customer, cargo, sort = 'newest', page = 1, limit = 10 } = req.query;
+    const { status, type, month, year, date, search, customer, cargo, before, since, sort = 'newest', page = 1, limit = 10 } = req.query;
 
     const conditions = [];
 
@@ -350,9 +393,9 @@ exports.getAllOrders = async (req, res) => {
       });
     }
 
-    // Rollers only ever see the queue they work on and what they have rolled
+    // Rollers see sell orders from the moment they are queued for rolling
     if (req.user.role === 'roller') {
-      conditions.push({ status: rollerStatusMatch(status) });
+      conditions.push({ type: 'sell order', status: rollerStatusMatch(status) });
     } else if (status) {
       conditions.push({ status });
     }
@@ -377,6 +420,11 @@ exports.getAllOrders = async (req, res) => {
       const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
       conditions.push({ createdAt: { $gte: startDate, $lte: endDate } });
     }
+
+    // Cursors on createdAt — the roller's chat pages back with "before" and
+    // re-reads everything it has loaded with "since"
+    if (before && !isNaN(new Date(before))) conditions.push({ createdAt: { $lt: new Date(before) } });
+    if (since && !isNaN(new Date(since))) conditions.push({ createdAt: { $gte: new Date(since) } });
 
     // Search by customer/vendor name or order id
     if (search && search.trim()) {
@@ -525,8 +573,8 @@ exports.getOrder = async (req, res) => {
       }
     }
 
-    // Rollers only see the "to roll" queue and what has been rolled
-    if (req.user.role === 'roller' && !ROLLER_STATUSES.includes(order.status)) {
+    // Rollers only see sell orders that have been queued for rolling
+    if (req.user.role === 'roller' && (order.type !== 'sell order' || !ROLLER_VISIBLE_STATUSES.includes(order.status))) {
       return res.status(403).json({
         success: false,
         message: 'Access denied'

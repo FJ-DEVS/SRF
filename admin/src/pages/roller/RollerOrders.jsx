@@ -1,26 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
 import RakAllocationModal from '../../components/RakAllocationModal';
 import AlertModal from '../../components/AlertModal';
 import ConfirmModal from '../../components/ConfirmModal';
-import SortSelect from '../../components/SortSelect';
 import {
-  Search, CheckCircle2, CircleCheck, ClipboardCheck, X, SlidersHorizontal,
-  Calendar, Package, ArrowLeft, Truck, Undo2, PanelRightClose, UserCheck
+  Search, CircleCheck, ClipboardCheck, X, ArrowLeft, Truck, Undo2, UserCheck, MessageSquare, Package, Receipt
 } from 'lucide-react';
 
-const SORT_OPTIONS = [
-  { value: 'newest', label: 'Newest first' },
-  { value: 'oldest', label: 'Oldest first' },
-  { value: 'name_asc', label: 'Customer A–Z' },
-  { value: 'name_desc', label: 'Customer Z–A' },
-  { value: 'qty_desc', label: 'Quantity: high to low' },
-  { value: 'qty_asc', label: 'Quantity: low to high' }
-];
-
-// How many orders a list shows before "Load more" — the API caps a page at 100
-const PAGE_STEP = 30;
+// How many customers the chat list shows before "Load more", and how many
+// orders a chat pulls in per page as the roller scrolls up
+const CUSTOMER_STEP = 30;
+const ORDER_STEP = 20;
+// The API caps a page at 100 — the most a live refresh can re-read at once
 const MAX_LIMIT = 100;
 
 const initials = (name = '') =>
@@ -30,15 +22,25 @@ const totalQty = (order) => (order.items || []).reduce((sum, oi) => sum + (oi.qu
 
 const timeOf = (d) => d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
 
+const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+const daysAgo = (d) => Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+
 // Chat-list style stamp: time today, "Yesterday", then the date
 const chatStamp = (value) => {
   const d = new Date(value);
-  const today = new Date();
-  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((startOf(today) - startOf(d)) / 86400000);
+  const days = daysAgo(d);
   if (days === 0) return timeOf(d);
   if (days === 1) return 'Yesterday';
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+};
+
+// The divider between days in a chat
+const dayLabel = (value) => {
+  const d = new Date(value);
+  const days = daysAgo(d);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 };
 
 const fullStamp = (value) => {
@@ -46,238 +48,247 @@ const fullStamp = (value) => {
   return `${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${timeOf(d)}`;
 };
 
-// The roller's order list ("to roll", "rolled" or "all" for both) with its
-// own search, sort and filters
-const useRollerList = (status) => {
-  const [orders, setOrders] = useState([]);
+// Every status a roller can see. Only "to roll" and "rolled" are theirs to
+// change — the rest are shown as where the order has got to.
+const STATUS_STYLE = {
+  'to roll': { label: 'To roll', chip: 'bg-blue-100 text-blue-700', dot: 'bg-blue-600' },
+  rolled: { label: 'Rolled', chip: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-600' },
+  billed: { label: 'Billed', chip: 'bg-violet-100 text-violet-700', dot: 'bg-violet-600' },
+  delivered: { label: 'Delivered', chip: 'bg-teal-100 text-teal-700', dot: 'bg-teal-600' },
+  completed: { label: 'Completed', chip: 'bg-slate-200 text-slate-700', dot: 'bg-slate-500' },
+  cancellation_requested: { label: 'Cancel requested', chip: 'bg-amber-100 text-amber-800', dot: 'bg-amber-500' },
+  cancelled: { label: 'Cancelled', chip: 'bg-rose-100 text-rose-700', dot: 'bg-rose-500' }
+};
+const statusStyle = (status) => STATUS_STYLE[status] || { label: status, chip: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' };
+
+const StatusChip = ({ status, className = '' }) => {
+  const style = statusStyle(status);
+  return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${style.chip} ${className}`}>{style.label}</span>;
+};
+
+// The left pane: one row per customer, the one with the latest order on top
+const useCustomers = () => {
+  const [customers, setCustomers] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [limit, setLimit] = useState(PAGE_STEP);
+  const [limit, setLimit] = useState(CUSTOMER_STEP);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('newest');
-  const [customerFilter, setCustomerFilter] = useState('');
-  const [cargoFilter, setCargoFilter] = useState('');
-  const [filterOptions, setFilterOptions] = useState({ customers: [], cargos: [] });
 
-  const fetchOrders = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      setLoading(true);
-      const response = await api.get('/orders/roller/list', {
-        params: { status, search: searchTerm, sort: sortBy, customer: customerFilter, cargo: cargoFilter, page: 1, limit }
-      });
+      const response = await api.get('/orders/roller/customers', { params: { search: searchTerm, limit } });
       if (response.data.success) {
-        setOrders(response.data.data);
-        setTotal(response.data.pagination.total);
+        setCustomers(response.data.data);
+        setTotal(response.data.total);
       }
     } catch (error) {
-      console.error('Error fetching orders:', error);
+      console.error('Error fetching customers:', error);
     } finally {
       setLoading(false);
     }
-  }, [status, searchTerm, sortBy, customerFilter, cargoFilter, limit]);
+  }, [searchTerm, limit]);
 
-  // Dropdown values come from the orders in this list, so the roller is never
-  // offered a customer or cargo that matches nothing
-  const fetchFilterOptions = useCallback(async () => {
-    try {
-      const response = await api.get('/orders/roller/filters', { params: { status } });
-      if (response.data.success) setFilterOptions(response.data.data);
-    } catch (error) {
-      console.error('Error fetching filter options:', error);
-    }
-  }, [status]);
-
-  useEffect(() => { fetchOrders(); }, [fetchOrders]);
-  useEffect(() => { fetchFilterOptions(); }, [fetchFilterOptions]);
-  useEffect(() => { setLimit(PAGE_STEP); }, [searchTerm, sortBy, customerFilter, cargoFilter]);
-
-  const refresh = useCallback(() => {
-    fetchOrders();
-    fetchFilterOptions();
-  }, [fetchOrders, fetchFilterOptions]);
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { setLimit(CUSTOMER_STEP); }, [searchTerm]);
 
   return {
-    orders, setOrders, total, loading, refresh,
-    canLoadMore: orders.length < total && limit < MAX_LIMIT,
-    loadMore: () => setLimit((l) => Math.min(l + PAGE_STEP, MAX_LIMIT)),
-    searchTerm, setSearchTerm, sortBy, setSortBy,
-    customerFilter, setCustomerFilter, cargoFilter, setCargoFilter, filterOptions,
-    activeFilterCount: (customerFilter ? 1 : 0) + (cargoFilter ? 1 : 0)
+    customers, setCustomers, total, loading, refresh, searchTerm, setSearchTerm,
+    canLoadMore: customers.length < total,
+    loadMore: () => setLimit((l) => l + CUSTOMER_STEP)
   };
 };
 
-// Column title with its count, and the search / filter toggles
-const ListHeader = ({ title, pillClass, list }) => {
-  const [showSearch, setShowSearch] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-  const iconBtn = (active) =>
-    `flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
-      active ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-    }`;
+// One customer's orders, oldest first like a chat. It opens on the newest
+// page and pages back in time as the roller scrolls up.
+const useChat = (customerId) => {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasOlder, setHasOlder] = useState(false);
 
-  return (
-    <div className="shrink-0 px-4 pb-3 pt-4">
-      <div className="flex items-center gap-2">
-        <h2 className="font-display text-[17px] font-bold text-slate-900">{title}</h2>
-        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${pillClass}`}>
-          {list.total} order{list.total === 1 ? '' : 's'}
-        </span>
-        <div className="ml-auto flex gap-1.5">
-          <button type="button" onClick={() => setShowSearch((v) => !v)} className={iconBtn(showSearch || list.searchTerm)} aria-label="Search">
-            <Search className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={() => setShowFilters((v) => !v)} className={`relative ${iconBtn(showFilters || list.activeFilterCount)}`} aria-label="Filters">
-            <SlidersHorizontal className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+  const fetchPage = (params) =>
+    api.get('/orders/roller/list', { params: { customer: customerId, sort: 'newest', page: 1, ...params } });
 
-      {showSearch && (
-        <div className="relative mt-3">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            autoFocus
-            type="text"
-            placeholder="Search by customer or order ID…"
-            value={list.searchTerm}
-            onChange={(e) => list.setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
-          {list.searchTerm && (
-            <button
-              onClick={() => list.setSearchTerm('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
-              aria-label="Clear search"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      )}
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetchPage({ limit: ORDER_STEP });
+        if (cancelled || !response.data.success) return;
+        setOrders([...response.data.data].reverse());
+        setHasOlder(response.data.pagination.total > response.data.data.length);
+      } catch (error) {
+        console.error('Error fetching orders:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
 
-      {showFilters && (
-        <div className="mt-3 grid grid-cols-1 gap-2">
-          <SortSelect value={list.sortBy} onChange={list.setSortBy} options={SORT_OPTIONS} />
-          <select value={list.customerFilter} onChange={(e) => list.setCustomerFilter(e.target.value)} aria-label="Customer">
-            <option value="">All customers</option>
-            {list.filterOptions.customers.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-          </select>
-          <select value={list.cargoFilter} onChange={(e) => list.setCargoFilter(e.target.value)} aria-label="Cargo">
-            <option value="">All cargos</option>
-            {list.filterOptions.cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-          </select>
-          {list.activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={() => { list.setCustomerFilter(''); list.setCargoFilter(''); }}
-              className="srf-chip self-start text-slate-400"
-            >
-              <X className="h-3 w-3" />
-              Clear filters
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  const loadOlder = async () => {
+    if (loadingOlder || !hasOlder || orders.length === 0) return false;
+    try {
+      setLoadingOlder(true);
+      const response = await fetchPage({ limit: ORDER_STEP, before: orders[0].createdAt });
+      if (!response.data.success) return false;
+      const older = [...response.data.data].reverse();
+      setOrders((current) => {
+        const ids = new Set(current.map((o) => o._id));
+        return [...older.filter((o) => !ids.has(o._id)), ...current];
+      });
+      setHasOlder(response.data.pagination.total > older.length);
+      return true;
+    } catch (error) {
+      console.error('Error fetching older orders:', error);
+      return false;
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  // Re-read everything from the oldest loaded order on, so new orders land at
+  // the bottom and status changes made anywhere show through
+  const refresh = async () => {
+    try {
+      const since = orders[0]?.createdAt;
+      const response = await fetchPage({ limit: since ? MAX_LIMIT : ORDER_STEP, since });
+      if (!response.data.success) return;
+      const fresh = [...response.data.data].reverse();
+      setOrders((current) => {
+        // A full page may not reach back to the oldest loaded order — keep
+        // whatever is older than it
+        if (fresh.length < MAX_LIMIT || !fresh.length) return fresh;
+        return [...current.filter((o) => new Date(o.createdAt) < new Date(fresh[0].createdAt)), ...fresh];
+      });
+    } catch (error) {
+      console.error('Error refreshing orders:', error);
+    }
+  };
+
+  const patchOrder = (id, patch) => setOrders((current) => current.map((o) => (o._id === id ? { ...o, ...patch } : o)));
+
+  return { orders, loading, loadingOlder, hasOlder, loadOlder, refresh, patchOrder };
 };
 
-const ListBody = ({ list, emptyIcon, emptyTitle, emptyText, children }) => {
-  const EmptyIcon = emptyIcon;
-  if (list.loading && list.orders.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-slate-500" />
-      </div>
-    );
-  }
-  if (list.orders.length === 0) {
-    const hasQuery = Boolean(list.searchTerm || list.activeFilterCount);
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center px-6 py-14 text-center">
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-emerald-500 ring-1 ring-slate-200">
-          <EmptyIcon className="h-5 w-5" />
-        </span>
-        <p className="mt-3 text-sm font-semibold text-slate-700">{emptyTitle}</p>
-        <p className="mt-1 text-xs text-slate-400">{hasQuery ? 'No orders match your search or filters.' : emptyText}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
-      {children}
-      {list.canLoadMore && (
-        <div className="p-3">
-          <button type="button" onClick={list.loadMore} className="srf-btn srf-btn-secondary w-full">Load more</button>
-        </div>
-      )}
-    </div>
-  );
-};
+const Avatar = ({ name, className = 'h-11 w-11 text-sm' }) => (
+  <span className={`flex shrink-0 items-center justify-center rounded-full bg-emerald-50 font-semibold text-emerald-700 ${className}`}>
+    {initials(name)}
+  </span>
+);
 
-// Row colours say where the order stands — blue "to roll", green "rolled".
-// Within each, a not-seen order is tinted, bold and carries a dot.
-const STATUS_STYLE = {
-  'to roll': {
-    label: 'To roll',
-    unseenRow: 'bg-blue-50/70 hover:bg-blue-50',
-    avatarUnseen: 'bg-blue-100 text-blue-700',
-    avatarSeen: 'bg-blue-50 text-blue-400',
-    accent: 'text-blue-600',
-    dot: 'bg-blue-600',
-    chip: 'bg-blue-100 text-blue-700',
-    bar: 'bg-blue-600'
-  },
-  rolled: {
-    label: 'Rolled',
-    unseenRow: 'bg-emerald-50/80 hover:bg-emerald-50',
-    avatarUnseen: 'bg-emerald-100 text-emerald-700',
-    avatarSeen: 'bg-emerald-50 text-emerald-500',
-    accent: 'text-emerald-600',
-    dot: 'bg-emerald-600',
-    chip: 'bg-emerald-100 text-emerald-700',
-    bar: 'bg-emerald-600'
-  }
-};
-
-// One order as a chat row
-const OrderRow = ({ order, selected, onSelect }) => {
-  const style = STATUS_STYLE[order.status] || STATUS_STYLE['to roll'];
-  const unseen = !order.rollerSeenAt;
-  const name = order.customerName?.name || '—';
+// One customer as a chat row: their latest order is the preview, and the
+// green count is how many of their "to roll" orders nobody has opened yet
+const CustomerRow = ({ customer, selected, onSelect }) => {
+  const unseen = customer.unseenCount > 0;
   return (
     <button
       type="button"
       onClick={onSelect}
       className={`relative flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition-colors ${
-        selected ? 'bg-slate-100' : unseen ? style.unseenRow : 'bg-white hover:bg-slate-50'
+        selected ? 'bg-slate-100' : 'bg-white hover:bg-slate-50'
       }`}
     >
-      {selected && <span className={`absolute inset-y-0 left-0 w-1 rounded-r ${style.bar}`} />}
-      <span
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-          unseen ? style.avatarUnseen : style.avatarSeen
-        }`}
-      >
-        {initials(name)}
-      </span>
+      {selected && <span className="absolute inset-y-0 left-0 w-1 rounded-r bg-emerald-600" />}
+      <Avatar name={customer.name} />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2">
-          <span className={`truncate text-[14px] ${unseen ? 'font-bold text-slate-900' : 'font-medium text-slate-600'}`}>{name}</span>
-          <span className={`shrink-0 text-[11px] ${unseen ? `font-semibold ${style.accent}` : 'text-slate-400'}`}>
-            {chatStamp(order.createdAt)}
+          <span className={`truncate text-[14px] ${unseen ? 'font-bold text-slate-900' : 'font-medium text-slate-700'}`}>{customer.name}</span>
+          <span className={`shrink-0 text-[11px] ${unseen ? 'font-semibold text-emerald-600' : 'text-slate-400'}`}>
+            {chatStamp(customer.lastOrderAt)}
           </span>
         </span>
         <span className="mt-1 flex items-center gap-2">
           <span className={`flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] ${unseen ? 'font-semibold text-slate-700' : 'text-slate-400'}`}>
-            <Truck className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{order.cargo?.name || 'No cargo'}</span>
+            <span className={`h-2 w-2 shrink-0 rounded-full ${statusStyle(customer.lastStatus).dot}`} />
+            <span className="truncate">
+              {statusStyle(customer.lastStatus).label} · Qty {customer.lastQty} · {customer.lastCargoName || 'No cargo'}
+            </span>
           </span>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${style.chip}`}>{style.label}</span>
-          {unseen && <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />}
+          {unseen ? (
+            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white">
+              {customer.unseenCount}
+            </span>
+          ) : customer.toRollCount > 0 ? (
+            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+              {customer.toRollCount} to roll
+            </span>
+          ) : null}
         </span>
       </span>
     </button>
+  );
+};
+
+const CustomerList = ({ list, selectedId, onSelect }) => {
+  const [showSearch, setShowSearch] = useState(false);
+
+  return (
+    <>
+      <div className="shrink-0 px-4 pb-3 pt-4">
+        <div className="flex items-center gap-2">
+          <h2 className="font-display text-[17px] font-bold text-slate-900">Customers</h2>
+          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700">{list.total}</span>
+          <button
+            type="button"
+            onClick={() => setShowSearch((v) => !v)}
+            className={`ml-auto flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
+              showSearch || list.searchTerm ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+            }`}
+            aria-label="Search"
+          >
+            <Search className="h-4 w-4" />
+          </button>
+        </div>
+        {showSearch && (
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search customers…"
+              value={list.searchTerm}
+              onChange={(e) => list.setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+            {list.searchTerm && (
+              <button
+                onClick={() => list.setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                aria-label="Clear search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {list.loading && list.customers.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center p-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-slate-500" />
+        </div>
+      ) : list.customers.length === 0 ? (
+        <EmptyPane
+          icon={ClipboardCheck}
+          iconClass="text-emerald-500"
+          title="No orders"
+          text={list.searchTerm ? 'No customers match your search.' : 'New orders will show up here automatically.'}
+        />
+      ) : (
+        <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
+          {list.customers.map((customer) => (
+            <CustomerRow key={customer._id} customer={customer} selected={customer._id === selectedId} onSelect={() => onSelect(customer)} />
+          ))}
+          {list.canLoadMore && (
+            <div className="p-3">
+              <button type="button" onClick={list.loadMore} className="srf-btn srf-btn-secondary w-full">Load more</button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 };
 
@@ -294,168 +305,141 @@ const EmptyPane = ({ icon, title, text, iconClass }) => {
   );
 };
 
-// One order in full — customer, notes and items — with the pane's buttons
-// underneath. Used by both the details pane and the rolled pane.
-const OrderDetails = ({ order, title, cardRing, onBack, actions }) => {
-  const isQueue = order.status === 'to roll';
-  const customer = order.customerName || {};
-
+// One order as a chat message, with the button for whatever the roller can
+// do next — roll it, or take a roll back. Anything past "rolled" is out of
+// the roller's hands, so it only shows its status.
+const OrderBubble = ({ order, onRoll, onRevert }) => {
+  const isNew = order.status === 'to roll' && !order.rollerSeenAt;
   return (
-    <>
-      <div className="flex shrink-0 items-center gap-2 px-5 pb-3 pt-4">
-        <button type="button" onClick={onBack} className="-ml-2 rounded-lg p-2 text-slate-500 hover:bg-white lg:hidden" aria-label="Back">
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <h2 className="font-display text-[17px] font-bold text-slate-900">{title}</h2>
-        <span
-          className={`ml-auto rounded-full px-3 py-1 text-[11px] font-semibold ${
-            isQueue ? 'bg-amber-200/70 text-amber-800' : 'bg-emerald-100 text-emerald-700'
-          }`}
-        >
-          {isQueue ? 'To Roll' : 'Rolled'}
-        </span>
-      </div>
-
-      <div className="scrollbar-none min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3">
-        {/* Summary */}
-        <div className={`rounded-xl bg-white p-4 ring-1 ${cardRing}`}>
-          <p className="truncate text-[16px] font-bold text-slate-900">{customer.name || '—'}</p>
-          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[13px] text-slate-600">
-            <p className="flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-slate-400" />{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-            <p className="flex items-center gap-2"><Package className="h-3.5 w-3.5 text-slate-400" />Total qty <span className="font-semibold tabular-nums text-slate-900">{totalQty(order)}</span></p>
-            <p className="flex items-center gap-2"><Truck className="h-3.5 w-3.5 text-slate-400" />{order.cargo?.name || 'No cargo'}</p>
-          </div>
+    <div className="flex">
+      <div className="w-full max-w-[560px] rounded-2xl rounded-tl-sm bg-white p-3.5 shadow-sm ring-1 ring-black/5">
+        <div className="flex items-center gap-2">
+          <p className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-slate-500">
+            <Truck className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+            <span className="truncate">{order.cargo?.name || 'No cargo'}</span>
+          </p>
+          {isNew && <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white">New</span>}
+          <StatusChip status={order.status} className="ml-auto" />
         </div>
 
         {order.notes && (
-          <p className={`rounded-xl bg-white px-4 py-2.5 text-[12.5px] text-amber-700 ring-1 ${cardRing}`}>
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[12.5px] text-amber-700">
             <span className="font-semibold">Note:</span> {order.notes}
           </p>
         )}
 
-        {/* Items */}
-        <div className={`rounded-xl bg-white p-4 ring-1 ${cardRing}`}>
-          <p className="mb-3 text-[14px] font-semibold text-slate-900">Order Items</p>
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="text-left text-[12px] text-slate-500">
-                <th className="rounded-l-lg bg-slate-50 px-3 py-2 font-medium">#</th>
-                <th className="bg-slate-50 px-3 py-2 font-medium">Item</th>
-                <th className="rounded-r-lg bg-slate-50 px-3 py-2 text-right font-medium">Qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(order.items || []).map((oi, idx) => (
-                <tr key={oi._id || idx} className="border-b border-slate-100 last:border-0">
-                  <td className="px-3 py-2">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 text-[11px] text-slate-500">{idx + 1}</span>
-                  </td>
-                  <td className="px-3 py-2 font-semibold text-slate-900">{oi.item?.name || 'Deleted item'}</td>
-                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-900">{oi.quantity}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-2 divide-y divide-slate-100 rounded-lg bg-slate-50/70 px-3">
+          {(order.items || []).map((oi, idx) => (
+            <div key={oi._id || idx} className="flex items-center gap-3 py-1.5 text-[13px]">
+              <span className="min-w-0 flex-1 truncate font-medium text-slate-800">{oi.item?.name || 'Deleted item'}</span>
+              <span className="font-semibold tabular-nums text-slate-900">{oi.quantity}</span>
+            </div>
+          ))}
         </div>
 
-        {!isQueue && (
-          <p className="flex items-center gap-1.5 px-1 text-[12px] text-slate-500">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            Rolled on <span className="font-semibold text-slate-700">{fullStamp(order.updatedAt)}</span>
-          </p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-slate-500">
+          <span className="flex items-center gap-1.5"><Package className="h-3.5 w-3.5 text-slate-400" />Total qty <span className="font-semibold tabular-nums text-slate-900">{totalQty(order)}</span></span>
+          {order.rolledBy && (
+            <span className="flex items-center gap-1.5"><UserCheck className="h-3.5 w-3.5 text-emerald-600" />Rolled by <span className="font-semibold text-slate-700">{order.rolledBy.name || order.rolledBy.username}</span></span>
+          )}
+          {order.billNumber && (
+            <span className="flex items-center gap-1.5"><Receipt className="h-3.5 w-3.5 text-violet-500" />Bill <span className="font-semibold text-slate-700">{order.billNumber}</span></span>
+          )}
+        </div>
 
-        {!isQueue && order.rolledBy && (
-          <p className="flex items-center gap-1.5 px-1 text-[12px] text-slate-500">
-            <UserCheck className="h-4 w-4 text-emerald-600" />
-            Rolled by <span className="font-semibold text-slate-700">{order.rolledBy.name || order.rolledBy.username}</span>
-          </p>
-        )}
+        <div className="mt-3 flex items-end gap-3">
+          {order.status === 'to roll' && (
+            <button
+              type="button"
+              onClick={() => onRoll(order)}
+              className="flex h-10 items-center gap-2 rounded-xl bg-emerald-700 px-4 text-[13px] font-semibold text-white shadow-md shadow-emerald-700/20 transition-colors hover:bg-emerald-600"
+            >
+              <CircleCheck className="h-4 w-4" />
+              Change to Rolled
+            </button>
+          )}
+          {order.status === 'rolled' && (
+            <button
+              type="button"
+              onClick={() => onRevert(order)}
+              className="flex h-10 items-center gap-2 rounded-xl bg-slate-900 px-4 text-[13px] font-semibold text-white transition-colors hover:bg-slate-700"
+            >
+              <Undo2 className="h-4 w-4" />
+              Revert
+            </button>
+          )}
+          <span className="ml-auto text-[11px] text-slate-400" title={fullStamp(order.createdAt)}>{timeOf(new Date(order.createdAt))}</span>
+        </div>
       </div>
-
-      <div className="flex shrink-0 gap-3 px-5 pb-5 pt-2">{actions}</div>
-    </>
+    </div>
   );
 };
 
-// Dismiss only closes the pane — the order itself is left exactly as it is
-const DismissButton = ({ onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-rose-300 bg-rose-50 text-[14px] font-semibold text-rose-600 transition-colors hover:bg-rose-100"
-  >
-    <PanelRightClose className="h-4 w-4" />
-    Dismiss
-  </button>
-);
+// The right pane: one customer's orders as a chat, newest at the bottom
+const ChatPane = ({ customer, onBack }) => {
+  const chat = useChat(customer._id);
+  const scrollRef = useRef(null);
+  // What to do with the scroll once the next render lands: jump to the
+  // bottom, or hold still while older orders are added above
+  const pendingScroll = useRef('bottom');
 
-// Three panes side by side on wide screens: every roller order as a chat list,
-// the order picked from it, and the order just rolled (with an undo). The two
-// right panes start empty and Dismiss just empties them again. On a phone the
-// list shows until a pane has an order, which then shows over it.
-const RollerOrders = () => {
-  const list = useRollerList('all');
-
-  // The panes keep the order they were given, but read it from the list while
-  // it is there so a live update (seen, rolled elsewhere) shows through
-  const [detailOrder, setDetailOrder] = useState(null);
-  const [rolledOrder, setRolledOrder] = useState(null);
-  const fresh = (order) => (order && list.orders.find((o) => o._id === order._id)) || order;
-  const detail = fresh(detailOrder);
-  const rolled = fresh(rolledOrder);
-
-  // Other "to roll" orders in the list for the picked order's customer, so the
-  // roller can do them together
-  const customerId = detail?.customerName?._id;
-  const sameCustomer = customerId
-    ? list.orders.filter((o) => o._id !== detail._id && o.status === 'to roll' && o.customerName?._id === customerId)
-    : [];
-
-  const [showRollModal, setShowRollModal] = useState(false);
-  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [rollOrder, setRollOrder] = useState(null);
+  const [revertOrder, setRevertOrder] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showAlertModal, setShowAlertModal] = useState(false);
-  const [alertConfig, setAlertConfig] = useState({ title: '', message: '', type: 'error' });
+  const [alertConfig, setAlertConfig] = useState(null);
+  const showAlert = (title, message, type = 'error') => setAlertConfig({ title, message, type });
 
-  // Keep the list live — new orders, and anyone else rolling or opening one
-  const { refresh } = list;
+  // Keep the chat live — new orders, and anyone else rolling or billing one
+  const refreshRef = useRef(chat.refresh);
+  refreshRef.current = chat.refresh;
   useEffect(() => {
     const socket = getSocket();
-    socket.on('orders_updated', refresh);
-    return () => socket.off('orders_updated', refresh);
-  }, [refresh]);
+    const onUpdate = () => {
+      const el = scrollRef.current;
+      // Follow new orders only if the roller is already at the bottom
+      if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) pendingScroll.current = 'bottom';
+      refreshRef.current();
+    };
+    socket.on('orders_updated', onUpdate);
+    return () => socket.off('orders_updated', onUpdate);
+  }, []);
 
-  const showAlert = (title, message, type = 'error') => {
-    setAlertConfig({ title, message, type });
-    setShowAlertModal(true);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const pending = pendingScroll.current;
+    if (!el || !pending) return;
+    if (pending === 'bottom') el.scrollTop = el.scrollHeight;
+    else el.scrollTop = el.scrollHeight - pending.fromBottom;
+    pendingScroll.current = null;
+  }, [chat.orders, chat.loading]);
+
+  const loadOlder = async () => {
+    const el = scrollRef.current;
+    if (!el || chat.loadingOlder || !chat.hasOlder) return;
+    pendingScroll.current = { fromBottom: el.scrollHeight - el.scrollTop };
+    const loaded = await chat.loadOlder();
+    if (!loaded) pendingScroll.current = null;
   };
 
-  const openOrder = (order) => {
-    setDetailOrder(order);
-    if (!order.rollerSeenAt) {
-      list.setOrders((orders) => orders.map((o) => (o._id === order._id ? { ...o, rollerSeenAt: new Date().toISOString() } : o)));
-      api.put(`/orders/roller/${order._id}/seen`).catch((error) => console.error('Error marking order seen:', error));
-    }
+  const handleScroll = (e) => {
+    if (e.currentTarget.scrollTop < 60) loadOlder();
   };
 
   // rakAllocation is the roller's pick of which raks the stock came off.
   // Marking rolled is the moment the goods have physically left the shelf, so
-  // this is where the raks get relieved. The rolled order moves across to the
-  // third pane, where it can still be taken back.
+  // this is where the raks get relieved.
   const handleMarkRolled = async (rakAllocation) => {
-    if (!detail) return;
+    if (!rollOrder) return;
     try {
       setSubmitting(true);
-      const response = await api.put(`/orders/${detail._id}/status`, { status: 'rolled', rakAllocation });
+      const response = await api.put(`/orders/${rollOrder._id}/status`, { status: 'rolled', rakAllocation });
       if (response.data.success) {
-        setShowRollModal(false);
-        setRolledOrder({ ...detail, ...response.data.data, customerName: detail.customerName });
-        setDetailOrder(null);
-        refresh();
+        chat.patchOrder(rollOrder._id, { status: 'rolled' });
+        setRollOrder(null);
+        chat.refresh();
       }
     } catch (error) {
-      setShowRollModal(false);
+      setRollOrder(null);
       showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
     } finally {
       setSubmitting(false);
@@ -465,132 +449,87 @@ const RollerOrders = () => {
   // Undo a roll: the order goes back to "to roll" and its stock back onto the
   // raks it came off
   const handleRevert = async () => {
-    if (!rolled) return;
+    if (!revertOrder) return;
     try {
       setSubmitting(true);
-      const response = await api.put(`/orders/${rolled._id}/revert-status`);
+      const response = await api.put(`/orders/${revertOrder._id}/revert-status`);
       if (response.data.success) {
-        setShowRevertModal(false);
-        setRolledOrder(null);
-        refresh();
-        showAlert('Order reverted', 'The order is back in "to roll".', 'success');
+        chat.patchOrder(revertOrder._id, { status: 'to roll', rolledBy: null });
+        setRevertOrder(null);
+        chat.refresh();
       }
     } catch (error) {
-      setShowRevertModal(false);
+      setRevertOrder(null);
       showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const pane = 'flex min-h-0 flex-col overflow-hidden rounded-2xl ring-1';
-  // Phone: the most recent step wins the screen
-  const mobilePane = rolled ? 'rolled' : detail ? 'detail' : 'list';
-  const paneVisibility = (name) => (mobilePane === name ? 'min-h-[75dvh] lg:min-h-0' : 'hidden');
+  const toRoll = chat.orders.filter((o) => o.status === 'to roll').length;
 
   return (
     <>
-      <div className="grid gap-3.5 lg:h-[calc(100dvh-11.75rem)] lg:grid-cols-[minmax(300px,1fr)_minmax(420px,1.45fr)_minmax(380px,1.2fr)]">
-        {/* 1 — Every order */}
-        <section className={`${pane} bg-white ring-slate-200/80 ${paneVisibility('list')} lg:flex`}>
-          <ListHeader title="Orders" pillClass="bg-slate-100 text-slate-700" list={list} />
-          <ListBody list={list} emptyIcon={ClipboardCheck} emptyTitle="No orders" emptyText="New orders will show up here automatically.">
-            {list.orders.map((order) => (
-              <OrderRow key={order._id} order={order} selected={order._id === detail?._id} onSelect={() => openOrder(order)} />
-            ))}
-          </ListBody>
-          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-blue-600" />To roll</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />Rolled</span>
-            <span className="ml-auto"><span className="font-bold text-slate-600">Bold</span> = not seen</span>
-          </div>
-        </section>
-
-        {/* 2 — The picked order */}
-        <section className={`${pane} bg-[#fff8ee] ring-amber-100 ${paneVisibility('detail')} lg:flex`}>
-          {detail ? (
-            <OrderDetails
-              order={detail}
-              title="Order Details"
-              cardRing="ring-amber-100"
-              onBack={() => setDetailOrder(null)}
-              actions={
-                <>
-                  <DismissButton onClick={() => setDetailOrder(null)} />
-                  {detail.status === 'to roll' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowRollModal(true)}
-                      className="flex h-12 flex-[1.45] items-center justify-center gap-2 rounded-xl bg-emerald-700 text-[14px] font-semibold text-white shadow-lg shadow-emerald-700/25 transition-colors hover:bg-emerald-600"
-                    >
-                      <CircleCheck className="h-5 w-5" />
-                      Change to Rolled
-                    </button>
-                  )}
-                </>
-              }
-            />
-          ) : (
-            <EmptyPane icon={ClipboardCheck} iconClass="text-amber-500" title="No order selected" text="Pick an order from the list to see its details." />
-          )}
-        </section>
-
-        {/* 3 — The order just rolled */}
-        <section className={`${pane} bg-emerald-50/70 ring-emerald-100 ${paneVisibility('rolled')} lg:flex`}>
-          {sameCustomer.length > 0 && (
-            <div className="m-3 mb-0 flex max-h-[45%] shrink-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-blue-200">
-              <div className="flex shrink-0 items-center gap-2 border-b border-blue-100 bg-blue-50 px-4 py-2.5">
-                <ClipboardCheck className="h-4 w-4 text-blue-600" />
-                <p className="text-[13px] font-semibold text-blue-800">Same customer's orders you might need to see</p>
-                <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">{sameCustomer.length}</span>
-              </div>
-              <div className="scrollbar-none min-h-0 overflow-y-auto">
-                {sameCustomer.map((order) => (
-                  <OrderRow key={order._id} order={order} selected={false} onSelect={() => openOrder(order)} />
-                ))}
-              </div>
-            </div>
-          )}
-          {rolled ? (
-            <OrderDetails
-              order={rolled}
-              title="Rolled Order"
-              cardRing="ring-emerald-100"
-              onBack={() => setRolledOrder(null)}
-              actions={
-                <>
-                  <DismissButton onClick={() => setRolledOrder(null)} />
-                  {rolled.status === 'rolled' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowRevertModal(true)}
-                      className="flex h-12 flex-[1.45] items-center justify-center gap-2 rounded-xl bg-slate-900 text-[14px] font-semibold text-white shadow-lg shadow-slate-900/20 transition-colors hover:bg-slate-700"
-                    >
-                      <Undo2 className="h-5 w-5" />
-                      Revert Order
-                    </button>
-                  )}
-                </>
-              }
-            />
-          ) : (
-            <EmptyPane icon={CheckCircle2} iconClass="text-emerald-500" title="Nothing rolled yet" text="An order you change to rolled shows up here." />
-          )}
-        </section>
+      <div className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white px-4 py-3">
+        <button type="button" onClick={onBack} className="-ml-2 rounded-lg p-2 text-slate-500 hover:bg-slate-100 lg:hidden" aria-label="Back">
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <Avatar name={customer.name} className="h-10 w-10 text-sm" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-bold text-slate-900">{customer.name}</p>
+          <p className="text-[12px] text-slate-500">
+            {customer.orderCount} order{customer.orderCount === 1 ? '' : 's'}
+            {toRoll > 0 && <> · <span className="font-semibold text-blue-600">{toRoll} to roll</span></>}
+          </p>
+        </div>
       </div>
 
+      {chat.loading ? (
+        <div className="flex flex-1 items-center justify-center p-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-slate-500" />
+        </div>
+      ) : (
+        <div ref={scrollRef} onScroll={handleScroll} className="scrollbar-none min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-4 sm:px-5">
+          {chat.hasOlder ? (
+            <div className="flex justify-center">
+              <button type="button" onClick={loadOlder} disabled={chat.loadingOlder} className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-black/5">
+                {chat.loadingOlder ? 'Loading…' : 'Load older orders'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-center text-[11px] text-slate-400">Start of this customer's orders</p>
+          )}
+          {chat.orders.map((order, idx) => {
+            const prev = chat.orders[idx - 1];
+            const newDay = !prev || startOfDay(new Date(prev.createdAt)) !== startOfDay(new Date(order.createdAt));
+            return (
+              <React.Fragment key={order._id}>
+                {newDay && (
+                  <div className="flex justify-center py-1">
+                    <span className="rounded-lg bg-white/90 px-3 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-black/5">
+                      {dayLabel(order.createdAt)}
+                    </span>
+                  </div>
+                )}
+                <OrderBubble order={order} onRoll={setRollOrder} onRevert={setRevertOrder} />
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+
       <RakAllocationModal
-        isOpen={showRollModal}
-        onClose={() => setShowRollModal(false)}
-        order={detail}
+        isOpen={Boolean(rollOrder)}
+        onClose={() => setRollOrder(null)}
+        order={rollOrder}
         onConfirm={handleMarkRolled}
         submitting={submitting}
         showAlert={showAlert}
       />
 
       <ConfirmModal
-        isOpen={showRevertModal}
-        onClose={() => setShowRevertModal(false)}
+        isOpen={Boolean(revertOrder)}
+        onClose={() => setRevertOrder(null)}
         onConfirm={handleRevert}
         title="Revert this order?"
         message='It goes back to "to roll" and its stock is put back on the raks it came off.'
@@ -599,13 +538,58 @@ const RollerOrders = () => {
       />
 
       <AlertModal
-        isOpen={showAlertModal}
-        onClose={() => setShowAlertModal(false)}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        type={alertConfig.type}
+        isOpen={Boolean(alertConfig)}
+        onClose={() => setAlertConfig(null)}
+        title={alertConfig?.title || ''}
+        message={alertConfig?.message || ''}
+        type={alertConfig?.type || 'error'}
       />
     </>
+  );
+};
+
+// Two panes, WhatsApp style: customers on the left with the latest order on
+// top, and the picked customer's orders as a chat on the right. On a phone
+// the list shows until a customer is picked, whose chat then takes the screen.
+const RollerOrders = () => {
+  const list = useCustomers();
+  const [selected, setSelected] = useState(null);
+  // Read the picked customer from the list while it is there, so live counts show through
+  const current = (selected && list.customers.find((c) => c._id === selected._id)) || selected;
+
+  const { refresh } = list;
+  useEffect(() => {
+    const socket = getSocket();
+    socket.on('orders_updated', refresh);
+    return () => socket.off('orders_updated', refresh);
+  }, [refresh]);
+
+  // An open chat has been seen — including orders that arrive while it is open
+  const currentId = current?._id;
+  const currentUnseen = current?.unseenCount || 0;
+  const { setCustomers } = list;
+  useEffect(() => {
+    if (!currentId || currentUnseen === 0) return;
+    setCustomers((customers) => customers.map((c) => (c._id === currentId ? { ...c, unseenCount: 0 } : c)));
+    api.put(`/orders/roller/customers/${currentId}/seen`).catch((error) => console.error('Error marking orders seen:', error));
+  }, [currentId, currentUnseen, setCustomers]);
+
+  const pane = 'flex min-h-0 flex-col overflow-hidden rounded-2xl ring-1';
+
+  return (
+    <div className="grid h-[calc(100dvh-11.25rem)] gap-3.5 sm:h-[calc(100dvh-11.75rem)] lg:grid-cols-[minmax(320px,1fr)_minmax(480px,2fr)]">
+      <section className={`${pane} bg-white ring-slate-200/80 ${current ? 'hidden' : 'flex'} lg:flex`}>
+        <CustomerList list={list} selectedId={current?._id} onSelect={setSelected} />
+      </section>
+
+      <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
+        {current ? (
+          <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
+        ) : (
+          <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
+        )}
+      </section>
+    </div>
   );
 };
 
