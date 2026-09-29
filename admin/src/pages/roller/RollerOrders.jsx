@@ -70,6 +70,7 @@ const StatusChip = ({ status, className = '' }) => {
 const useCustomers = () => {
   const [customers, setCustomers] = useState([]);
   const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(CUSTOMER_STEP);
   const [searchTerm, setSearchTerm] = useState('');
@@ -80,6 +81,7 @@ const useCustomers = () => {
       if (response.data.success) {
         setCustomers(response.data.data);
         setTotal(response.data.total);
+        setStats(response.data.stats);
       }
     } catch (error) {
       console.error('Error fetching customers:', error);
@@ -92,7 +94,7 @@ const useCustomers = () => {
   useEffect(() => { setLimit(CUSTOMER_STEP); }, [searchTerm]);
 
   return {
-    customers, setCustomers, total, loading, refresh, searchTerm, setSearchTerm,
+    customers, setCustomers, total, stats, loading, refresh, searchTerm, setSearchTerm,
     canLoadMore: customers.length < total,
     loadMore: () => setLimit((l) => l + CUSTOMER_STEP)
   };
@@ -289,6 +291,35 @@ const CustomerList = ({ list, selectedId, onSelect }) => {
         </div>
       )}
     </>
+  );
+};
+
+// Order counts across every customer, above the two panes
+const StatCards = ({ stats }) => {
+  const cards = [
+    { label: 'Total orders', value: stats?.total, icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-600' },
+    { label: 'To roll', value: stats?.toRoll, icon: Package, tone: 'bg-blue-100 text-blue-600' },
+    { label: 'Rolled', value: stats?.rolled, icon: CircleCheck, tone: 'bg-emerald-100 text-emerald-600' }
+  ];
+  return (
+    <div className="grid shrink-0 grid-cols-3 gap-2 sm:gap-3.5">
+      {cards.map(({ label, value, icon, tone }) => {
+        const Icon = icon;
+        return (
+          <div key={label} className="flex items-center gap-3 rounded-2xl bg-white px-3 py-2.5 ring-1 ring-slate-200/80 sm:px-4 sm:py-3">
+            <span className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl sm:flex ${tone}`}>
+              <Icon className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-slate-500 sm:text-[12px]">{label}</p>
+              <p className="font-display text-[18px] font-bold tabular-nums leading-tight text-slate-900 sm:text-[22px]">
+                {value ?? '–'}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 };
 
@@ -577,18 +608,21 @@ const RollerOrders = () => {
   const pane = 'flex min-h-0 flex-col overflow-hidden rounded-2xl ring-1';
 
   return (
-    <div className="grid h-[calc(100dvh-11.25rem)] gap-3.5 sm:h-[calc(100dvh-11.75rem)] lg:grid-cols-[minmax(320px,1fr)_minmax(480px,2fr)]">
-      <section className={`${pane} bg-white ring-slate-200/80 ${current ? 'hidden' : 'flex'} lg:flex`}>
-        <CustomerList list={list} selectedId={current?._id} onSelect={setSelected} />
-      </section>
+    <div className="flex h-[calc(100dvh-11.25rem)] flex-col gap-2 sm:h-[calc(100dvh-11.75rem)] sm:gap-3.5">
+      <StatCards stats={list.stats} />
+      <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[minmax(320px,1fr)_minmax(480px,2fr)]">
+        <section className={`${pane} bg-white ring-slate-200/80 ${current ? 'hidden' : 'flex'} lg:flex`}>
+          <CustomerList list={list} selectedId={current?._id} onSelect={setSelected} />
+        </section>
 
-      <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
-        {current ? (
-          <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
-        ) : (
-          <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
-        )}
-      </section>
+        <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
+          {current ? (
+            <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
+          ) : (
+            <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
+          )}
+        </section>
+      </div>
     </div>
   );
 };

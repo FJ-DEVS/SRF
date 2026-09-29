@@ -347,8 +347,18 @@ exports.getRollerCustomers = async (req, res) => {
       }
     );
 
-    const [result] = await Order.aggregate(pipeline);
-    res.status(200).json({ success: true, data: result.data, total: result.meta[0]?.total || 0 });
+    // Counts for the cards above the chat — across every customer, not just the search
+    const [[result], statusCounts] = await Promise.all([
+      Order.aggregate(pipeline),
+      Order.aggregate([{ $match: rollerVisibleQuery }, { $group: { _id: '$status', count: { $sum: 1 } } }])
+    ]);
+    const countOf = (status) => statusCounts.find((c) => c._id === status)?.count || 0;
+    const stats = {
+      total: statusCounts.reduce((sum, c) => sum + c.count, 0),
+      toRoll: countOf('to roll'),
+      rolled: countOf('rolled')
+    };
+    res.status(200).json({ success: true, data: result.data, total: result.meta[0]?.total || 0, stats });
   } catch (error) {
     console.error('Get roller customers error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
