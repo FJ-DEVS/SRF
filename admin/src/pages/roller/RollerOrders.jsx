@@ -14,6 +14,33 @@ const CUSTOMER_STEP = 30;
 const ORDER_STEP = 20;
 // The API caps a page at 100 — the most a live refresh can re-read at once
 const MAX_LIMIT = 100;
+// Safety-net poll in case a socket event is missed (dropped connection, sleeping tab)
+const POLL_MS = 20000;
+
+// Keep a view live without the roller refreshing: re-read on every
+// orders_updated event, on socket reconnect, when the tab comes back into
+// view, and on a slow poll while visible. All silent — no spinners.
+const useLiveRefresh = (refresh) => {
+  const refreshRef = useRef(refresh);
+  useLayoutEffect(() => { refreshRef.current = refresh; });
+  useEffect(() => {
+    const socket = getSocket();
+    const run = () => refreshRef.current();
+    const onVisible = () => { if (document.visibilityState === 'visible') run(); };
+    socket.on('orders_updated', run);
+    socket.on('connect', run);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', run);
+    const timer = setInterval(() => { if (document.visibilityState === 'visible') run(); }, POLL_MS);
+    return () => {
+      socket.off('orders_updated', run);
+      socket.off('connect', run);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', run);
+      clearInterval(timer);
+    };
+  }, []);
+};
 
 const initials = (name = '') =>
   name.replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
@@ -74,11 +101,15 @@ const useCustomers = () => {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(CUSTOMER_STEP);
   const [searchTerm, setSearchTerm] = useState('');
+  // Refreshes can overlap — only the latest request may write, so a slow
+  // older response never overwrites newer data
+  const requestId = useRef(0);
 
   const refresh = useCallback(async () => {
+    const id = ++requestId.current;
     try {
       const response = await api.get('/orders/roller/customers', { params: { search: searchTerm, limit } });
-      if (response.data.success) {
+      if (id === requestId.current && response.data.success) {
         setCustomers(response.data.data);
         setTotal(response.data.total);
         setStats(response.data.stats);
@@ -152,11 +183,13 @@ const useChat = (customerId) => {
 
   // Re-read everything from the oldest loaded order on, so new orders land at
   // the bottom and status changes made anywhere show through
+  const requestId = useRef(0);
   const refresh = async () => {
+    const id = ++requestId.current;
     try {
       const since = orders[0]?.createdAt;
       const response = await fetchPage({ limit: since ? MAX_LIMIT : ORDER_STEP, since });
-      if (!response.data.success) return;
+      if (id !== requestId.current || !response.data.success) return;
       const fresh = [...response.data.data].reverse();
       setOrders((current) => {
         // A full page may not reach back to the oldest loaded order — keep
@@ -294,15 +327,14 @@ const CustomerList = ({ list, selectedId, onSelect }) => {
   );
 };
 
-// Order counts across every customer, above the two panes
+// Order counts across every customer, above the customer list
 const StatCards = ({ stats }) => {
   const cards = [
-    { label: 'Total orders', value: stats?.total, icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-600' },
     { label: 'To roll', value: stats?.toRoll, icon: Package, tone: 'bg-blue-100 text-blue-600' },
     { label: 'Rolled', value: stats?.rolled, icon: CircleCheck, tone: 'bg-emerald-100 text-emerald-600' }
   ];
   return (
-    <div className="grid shrink-0 grid-cols-3 gap-2 sm:gap-3.5">
+    <div className="grid shrink-0 grid-cols-2 gap-2 sm:gap-3.5">
       {cards.map(({ label, value, icon, tone }) => {
         const Icon = icon;
         return (
@@ -421,19 +453,13 @@ const ChatPane = ({ customer, onBack }) => {
   const showAlert = (title, message, type = 'error') => setAlertConfig({ title, message, type });
 
   // Keep the chat live — new orders, and anyone else rolling or billing one
-  const refreshRef = useRef(chat.refresh);
-  refreshRef.current = chat.refresh;
-  useEffect(() => {
-    const socket = getSocket();
-    const onUpdate = () => {
-      const el = scrollRef.current;
-      // Follow new orders only if the roller is already at the bottom
-      if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) pendingScroll.current = 'bottom';
-      refreshRef.current();
-    };
-    socket.on('orders_updated', onUpdate);
-    return () => socket.off('orders_updated', onUpdate);
-  }, []);
+  useLiveRefresh(() => {
+    if (chat.loading) return;
+    const el = scrollRef.current;
+    // Follow new orders only if the roller is already at the bottom
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) pendingScroll.current = 'bottom';
+    chat.refresh();
+  });
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -588,12 +614,7 @@ const RollerOrders = () => {
   // Read the picked customer from the list while it is there, so live counts show through
   const current = (selected && list.customers.find((c) => c._id === selected._id)) || selected;
 
-  const { refresh } = list;
-  useEffect(() => {
-    const socket = getSocket();
-    socket.on('orders_updated', refresh);
-    return () => socket.off('orders_updated', refresh);
-  }, [refresh]);
+  useLiveRefresh(list.refresh);
 
   // An open chat has been seen — including orders that arrive while it is open
   const currentId = current?._id;
@@ -608,21 +629,21 @@ const RollerOrders = () => {
   const pane = 'flex min-h-0 flex-col overflow-hidden rounded-2xl ring-1';
 
   return (
-    <div className="flex h-[calc(100dvh-11.25rem)] flex-col gap-2 sm:h-[calc(100dvh-11.75rem)] sm:gap-3.5">
-      <StatCards stats={list.stats} />
-      <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[minmax(320px,1fr)_minmax(480px,2fr)]">
-        <section className={`${pane} bg-white ring-slate-200/80 ${current ? 'hidden' : 'flex'} lg:flex`}>
+    <div className="grid h-[calc(100dvh-11.25rem)] grid-rows-1 gap-3.5 sm:h-[calc(100dvh-11.75rem)] lg:grid-cols-[minmax(320px,1fr)_minmax(480px,2fr)]">
+      <div className={`min-h-0 flex-col gap-2 sm:gap-3.5 ${current ? 'hidden' : 'flex'} lg:flex`}>
+        <StatCards stats={list.stats} />
+        <section className={`${pane} flex-1 bg-white ring-slate-200/80`}>
           <CustomerList list={list} selectedId={current?._id} onSelect={setSelected} />
         </section>
-
-        <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
-          {current ? (
-            <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
-          ) : (
-            <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
-          )}
-        </section>
       </div>
+
+      <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
+        {current ? (
+          <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
+        ) : (
+          <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
+        )}
+      </section>
     </div>
   );
 };
