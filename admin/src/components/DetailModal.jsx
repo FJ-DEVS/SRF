@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Eye, EyeOff, Edit2 } from 'lucide-react';
 
-const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit }) => {
+const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = null }) => {
   const [visiblePasswords, setVisiblePasswords] = useState({});
 
   if (!isOpen) return null;
@@ -160,6 +160,7 @@ const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit }) => {
           <button onClick={handleClose} className="srf-btn srf-btn-secondary">
             Close
           </button>
+          {actions}
           {onEdit && (
             <button
               onClick={() => {

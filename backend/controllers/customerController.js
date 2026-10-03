@@ -189,6 +189,50 @@ exports.updateCustomer = async (req, res) => {
   }
 };
 
+// Block or unblock a customer — customer relation managers can do this and
+// nothing else to a customer, so it is its own endpoint rather than a way
+// through updateCustomer
+exports.setCustomerBlocked = async (req, res) => {
+  try {
+    const { isBlocked } = req.body;
+
+    if (typeof isBlocked !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isBlocked must be true or false'
+      });
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      req.params.id,
+      { isBlocked },
+      { new: true }
+    ).populate('assignedSalesman', 'name username phone');
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+
+    getIO().emit('customers_updated');
+
+    res.status(200).json({
+      success: true,
+      message: isBlocked ? 'Customer blocked' : 'Customer unblocked',
+      data: customer
+    });
+
+  } catch (error) {
+    console.error('Set customer blocked error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 // Get all customers (salesman access)
 exports.getCustomersForSalesman = async (req, res) => {
   try {
