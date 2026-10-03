@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck, Disc3, Calculator, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Disc3, Calculator, Headset, ArrowRight } from 'lucide-react';
 import logo1 from '../assets/logo1.png';
 
 const ROLES = [
@@ -27,6 +27,14 @@ const ROLES = [
     text: 'Track every order, queue and bill them, approve cancellations.',
     accent: 'group-hover:border-amber-300 group-hover:bg-amber-50/60',
     iconWrap: 'bg-amber-50 text-amber-600 ring-amber-100'
+  },
+  {
+    path: '/crm/login',
+    icon: Headset,
+    title: 'Customer Relation Manager',
+    text: 'Manage customers, block or unblock them, and confirm deliveries.',
+    accent: 'group-hover:border-sky-300 group-hover:bg-sky-50/60',
+    iconWrap: 'bg-sky-50 text-sky-600 ring-sky-100'
   }
 ];
 

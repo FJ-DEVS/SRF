@@ -297,6 +297,14 @@ const rollerVisibleQuery = { type: 'sell order', customerModel: 'Customer', stat
 const rollerStatusMatch = (status) =>
   ROLLER_VISIBLE_STATUSES.includes(status) ? status : { $in: ROLLER_VISIBLE_STATUSES };
 
+// Customer relation managers work the billed end of the pipeline: a sell order
+// from the moment it is billed, and on to delivered. Nothing before billing.
+const CRM_VISIBLE_STATUSES = ['billed', 'delivered'];
+
+// A CRM manager's status param: one of the visible statuses, or "all" (the default)
+const crmStatusMatch = (status) =>
+  CRM_VISIBLE_STATUSES.includes(status) ? status : { $in: CRM_VISIBLE_STATUSES };
+
 // The roller's chat list: one row per customer, most recent order first, with
 // that order as the preview and how many of their "to roll" orders are unseen
 exports.getRollerCustomers = async (req, res) => {
@@ -406,6 +414,8 @@ exports.getAllOrders = async (req, res) => {
     // Rollers see sell orders from the moment they are queued for rolling
     if (req.user.role === 'roller') {
       conditions.push({ type: 'sell order', status: rollerStatusMatch(status) });
+    } else if (req.user.role === 'crm') {
+      conditions.push({ type: 'sell order', status: crmStatusMatch(status) });
     } else if (status) {
       conditions.push({ status });
     }
@@ -436,7 +446,7 @@ exports.getAllOrders = async (req, res) => {
     if (before && !isNaN(new Date(before))) conditions.push({ createdAt: { $lt: new Date(before) } });
     if (since && !isNaN(new Date(since))) conditions.push({ createdAt: { $gte: new Date(since) } });
 
-    // Search by customer/vendor name or order id
+    // Search by customer/vendor name, bill number or order id
     if (search && search.trim()) {
       const regex = { $regex: escapeRegex(search.trim()), $options: 'i' };
       const [customerIds, vendorIds] = await Promise.all([
@@ -444,7 +454,7 @@ exports.getAllOrders = async (req, res) => {
         Vendor.find({ name: regex }).select('_id').lean()
       ]);
       const partyIds = [...customerIds, ...vendorIds].map((d) => d._id);
-      const searchOr = [{ customerName: { $in: partyIds } }];
+      const searchOr = [{ customerName: { $in: partyIds } }, { billNumber: regex }];
       if (mongoose.Types.ObjectId.isValid(search.trim())) {
         searchOr.push({ _id: search.trim() });
       }
@@ -462,10 +472,14 @@ exports.getAllOrders = async (req, res) => {
       name_asc: { partyName: 1, createdAt: -1 },
       name_desc: { partyName: -1, createdAt: -1 },
       qty_desc: { totalQty: -1, createdAt: -1 },
-      qty_asc: { totalQty: 1, createdAt: -1 }
+      qty_asc: { totalQty: 1, createdAt: -1 },
+      // Bill numbers are stored as strings, so they are compared as numbers
+      // (otherwise "100" sorts before "20"); orders with no bill go last
+      bill_desc: { hasBill: -1, billNo: -1, createdAt: -1 },
+      bill_asc: { hasBill: -1, billNo: 1, createdAt: -1 }
     };
     const sortSpec = sortSpecs[sort] || sortSpecs.newest;
-    const needsComputedSort = ['name_asc', 'name_desc', 'qty_desc', 'qty_asc'].includes(sort);
+    const needsComputedSort = ['name_asc', 'name_desc', 'qty_desc', 'qty_asc', 'bill_desc', 'bill_asc'].includes(sort);
 
     let orders;
     let total;
@@ -475,7 +489,13 @@ exports.getAllOrders = async (req, res) => {
       // then hydrate the page of ids with a normal populated find
       const pipeline = [
         { $match: query },
-        { $addFields: { totalQty: { $sum: '$items.quantity' } } },
+        {
+          $addFields: {
+            totalQty: { $sum: '$items.quantity' },
+            billNo: { $convert: { input: '$billNumber', to: 'long', onError: 0, onNull: 0 } },
+            hasBill: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$billNumber', ''] } }, 0] }, 1, 0] }
+          }
+        },
         { $lookup: { from: 'customers', localField: 'customerName', foreignField: '_id', as: '_cust' } },
         { $lookup: { from: 'vendors', localField: 'customerName', foreignField: '_id', as: '_vend' } },
         {
@@ -787,6 +807,17 @@ exports.updateOrderStatus = async (req, res) => {
         return res.status(403).json({
           success: false,
           message: 'Accounts managers can only move sell orders from "pending" to "to roll" and from "rolled" to "billed", and purchase orders from "pending" to "completed"'
+        });
+      }
+    }
+
+    // Customer relation manager owns one move: confirming a billed sell order
+    // as delivered
+    if (req.user.role === 'crm') {
+      if (order.type !== 'sell order' || order.status !== 'billed' || status !== 'delivered') {
+        return res.status(403).json({
+          success: false,
+          message: 'CRM managers can only move sell orders from "billed" to "delivered"'
         });
       }
     }

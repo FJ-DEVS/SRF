@@ -78,6 +78,16 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
             <div className="mt-0.5 flex flex-wrap gap-x-4 text-xs text-slate-500">
               {order.customerName?.phone && <span>{order.customerName.phone}</span>}
               {order.customerName?.gstin && <span>GSTIN: {order.customerName.gstin}</span>}
+              {order.customerName?.locationLink && (
+                <a
+                  href={order.customerName.locationLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-indigo-600 hover:underline"
+                >
+                  Open in maps
+                </a>
+              )}
             </div>
           </div>
 

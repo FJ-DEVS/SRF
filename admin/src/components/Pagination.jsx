@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-r
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
-const Pagination = ({ currentPage, totalPages, totalItems, itemsPerPage, onPageChange, onPageSizeChange }) => {
+const Pagination = ({ currentPage, totalPages, totalItems, itemsPerPage, onPageChange, onPageSizeChange, pageSizes = PAGE_SIZES }) => {
   const startItem = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
   const endItem = Math.min(currentPage * itemsPerPage, totalItems);
 
@@ -55,7 +55,7 @@ const Pagination = ({ currentPage, totalPages, totalItems, itemsPerPage, onPageC
               className="!rounded-lg !px-2 !py-1 !text-xs !font-medium"
               style={{ fontSize: '12px' }}
             >
-              {PAGE_SIZES.map((size) => (
+              {pageSizes.map((size) => (
                 <option key={size} value={size}>{size}</option>
               ))}
             </select>

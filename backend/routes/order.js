@@ -12,17 +12,19 @@ const anyAuthMiddleware = roleAuth('admin', 'salesman');
 // never create, edit or delete one
 const readAuthMiddleware = roleAuth('admin', 'salesman', 'accounts');
 
-// Status changes are also open to rollers and accounts managers — the
-// controller pins rollers to "to roll" → "rolled" and accounts managers to
+// Status changes are also open to rollers, accounts managers and CRM managers —
+// the controller pins rollers to "to roll" → "rolled", accounts managers to
 // "pending" → "to roll" and "rolled" → "billed" on sell orders, and
-// "pending" → "completed" on purchase orders
-const statusAuthMiddleware = roleAuth('admin', 'salesman', 'roller', 'accounts');
+// "pending" → "completed" on purchase orders, and CRM managers to
+// "billed" → "delivered" on sell orders
+const statusAuthMiddleware = roleAuth('admin', 'salesman', 'roller', 'accounts', 'crm');
 
 // Approving a cancellation is shared with accounts managers; rejecting one
 // stays with the admin
 const cancelApproveAuthMiddleware = roleAuth('admin', 'accounts');
 
 const rollerAuthMiddleware = roleAuth('roller');
+const crmAuthMiddleware = roleAuth('crm');
 
 // Dashboard stats - Admin and accounts manager
 router.get('/stats', roleAuth('admin', 'accounts'), orderController.getDashboardStats);
@@ -39,6 +41,9 @@ router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
 router.get('/roller/customers', rollerAuthMiddleware, orderController.getRollerCustomers);
 router.put('/roller/customers/:customerId/seen', rollerAuthMiddleware, orderController.markRollerCustomerSeen);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
+
+// CRM-only list — the controller pins it to billed and delivered sell orders
+router.get('/crm/list', crmAuthMiddleware, orderController.getAllOrders);
 
 // Which raks hold this order's items — feeds the roller's "pick the raks"
 // dialog shown on the way to "rolled"; admins can look too

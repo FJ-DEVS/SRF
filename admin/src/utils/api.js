@@ -5,7 +5,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000
 // Where each staff role signs in; anything else is the admin console
 const LOGIN_PATHS = {
   roller: '/roller/login',
-  accounts: '/accounts/login'
+  accounts: '/accounts/login',
+  crm: '/crm/login'
 };
 
 const api = axios.create({
