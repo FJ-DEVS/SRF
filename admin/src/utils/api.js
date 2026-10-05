@@ -59,5 +59,18 @@ api.interceptors.response.use(
   }
 );
 
+// Walk every page of a paginated list endpoint. A single big `limit` silently
+// drops records once the collection outgrows it.
+export const fetchAll = async (url, params = {}, pageSize = 1000) => {
+  const all = [];
+  for (let page = 1; ; page++) {
+    const res = await api.get(url, { params: { ...params, page, limit: pageSize } });
+    const data = res.data?.data || [];
+    all.push(...data);
+    const pages = res.data?.pagination?.pages ?? 1;
+    if (page >= pages || data.length === 0) return all;
+  }
+};
+
 export default api;
 

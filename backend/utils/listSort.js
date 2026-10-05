@@ -17,7 +17,9 @@ const NAME_COLLATION = { locale: 'en', strength: 2 };
 // Applies ?sort= to a mongoose query, falling back to newest-first
 const applySort = (query, sort) => {
   const spec = SORT_SPECS[sort] || SORT_SPECS.newest;
-  query.sort(spec);
+  // _id tiebreaker keeps page boundaries stable when sort keys collide
+  // (bulk imports share a createdAt), so paging never repeats or skips a row
+  query.sort({ ...spec, _id: 1 });
   if (spec.name !== undefined) query.collation(NAME_COLLATION);
   return query;
 };

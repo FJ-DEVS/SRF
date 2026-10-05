@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../utils/api';
+import api, { fetchAll } from '../utils/api';
 import PageHeader from '../components/PageHeader';
 import {
   ShoppingCart,
@@ -199,12 +199,10 @@ const Consolidation = () => {
     const fetchLists = async () => {
       try {
         const [itemsRes, salesmenRes] = await Promise.all([
-          api.get('/items', { params: { limit: 1000 } }),
+          fetchAll('/items'),
           api.get('/salesman', { params: { limit: 500 } })
         ]);
-        if (itemsRes.data.success) {
-          setItems([...itemsRes.data.data].sort((a, b) => a.name.localeCompare(b.name)));
-        }
+        setItems([...itemsRes].sort((a, b) => a.name.localeCompare(b.name)));
         if (salesmenRes.data.success) {
           setSalesmen([...salesmenRes.data.data].sort((a, b) => a.name.localeCompare(b.name)));
         }
