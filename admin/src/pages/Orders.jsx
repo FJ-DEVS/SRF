@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import api from '../utils/api';
+import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import ShareOrderModal from '../components/ShareOrderModal';
@@ -136,13 +136,13 @@ const Orders = () => {
       const [customersRes, vendorsRes, itemsRes, cargoRes] = await Promise.all([
         api.get('/customers', { params: { limit: 1000 } }),
         api.get('/vendors', { params: { limit: 1000 } }),
-        api.get('/items', { params: { limit: 1000 } }),
+        fetchAll('/items'),
         api.get('/cargo', { params: { limit: 500 } })
       ]);
 
       if (customersRes.data.success) setCustomers(customersRes.data.data);
       if (vendorsRes.data.success) setVendors(vendorsRes.data.data);
-      if (itemsRes.data.success) setItems(itemsRes.data.data);
+      setItems(itemsRes);
       if (cargoRes.data.success) setCargo(cargoRes.data.data);
     } catch (error) {
       console.error('Error fetching related data:', error);
