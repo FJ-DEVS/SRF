@@ -49,6 +49,9 @@ router.get('/crm/list', crmAuthMiddleware, orderController.getAllOrders);
 // dialog shown on the way to "rolled"; admins can look too
 router.get('/:id/rak-allocation', roleAuth('admin', 'roller'), orderController.getRakAllocation);
 
+// What can still be returned from a sell order — feeds the admin's return form
+router.get('/:id/returnable', authMiddleware, orderController.getReturnable);
+
 // Orders - Both admin and salesman can access (with restrictions in controller)
 router.post('/', anyAuthMiddleware, orderController.createOrder);
 router.get('/', readAuthMiddleware, orderController.getAllOrders);

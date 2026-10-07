@@ -10,6 +10,7 @@ import BillNumberModal from '../components/BillNumberModal';
 import OrderDetailModal from '../components/OrderDetailModal';
 import OrderTable from '../components/OrderTable';
 import OrderCard from '../components/OrderCard';
+import ReturnOrderPicker from '../components/ReturnOrderPicker';
 import { TYPE_STYLES, typeStyle } from '../utils/orderType';
 import { orderTotal, orderQty } from '../utils/orderMath';
 import {
@@ -71,6 +72,10 @@ const Orders = () => {
     notes: ''
   });
   const [selectedItems, setSelectedItems] = useState([]);
+  // Return orders: the sell order the goods came back from and how much of
+  // each of its lines is coming back; whether those pieces go back into stock
+  const [returnDraft, setReturnDraft] = useState({ order: null, lines: [] });
+  const [restock, setRestock] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
   const [showItemDropdown, setShowItemDropdown] = useState(false);
   const itemDropdownRef = useRef(null);
@@ -154,8 +159,40 @@ const Orders = () => {
     setShowAlertModal(true);
   };
 
+  const isReturnForm = formData.type === 'return order' && !selectedOrder;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (isReturnForm) {
+      if (!returnDraft.order) {
+        showAlert('Validation Error', 'Select the sell order the goods came back from', 'warning');
+        return;
+      }
+      const returning = returnDraft.lines.filter((l) => l.quantity > 0);
+      if (returning.length === 0) {
+        showAlert('Validation Error', 'Enter how many pieces are coming back on at least one line', 'warning');
+        return;
+      }
+      try {
+        const response = await api.post('/orders', {
+          type: 'return order',
+          returnOf: returnDraft.order._id,
+          items: returning.map((l) => ({ item: l.itemId, quantity: l.quantity })),
+          cargo: formData.cargo,
+          notes: formData.notes,
+          restock
+        });
+        if (response.data.success) {
+          fetchOrders();
+          handleCloseModal();
+          showAlert('Return Recorded', 'The return order has been recorded. Points for the returned pieces are taken off the leaderboard.', 'success');
+        }
+      } catch (error) {
+        showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
+      }
+      return;
+    }
 
     if (selectedItems.length === 0) {
       showAlert('Validation Error', 'Please select at least one item', 'warning');
@@ -294,6 +331,8 @@ const Orders = () => {
     setSelectedOrder(null);
     setFormData({ type: 'sell order', customerName: '', cargo: '', notes: '' });
     setSelectedItems([]);
+    setReturnDraft({ order: null, lines: [] });
+    setRestock(false);
     setItemSearch('');
     setShowItemDropdown(false);
   };
@@ -327,6 +366,7 @@ const Orders = () => {
   };
 
   const getNextStatus = (currentStatus, orderType) => {
+    if (orderType === 'return order') return null;
     if (orderType === 'purchase order') {
       return currentStatus === 'pending' ? 'completed' : null;
     }
@@ -340,6 +380,7 @@ const Orders = () => {
   };
 
   const getPrevStatus = (currentStatus, orderType) => {
+    if (orderType === 'return order') return null;
     if (orderType === 'purchase order') {
       return currentStatus === 'completed' ? 'pending' : null;
     }
@@ -421,7 +462,7 @@ const Orders = () => {
         </>
       ) : (
         order.status !== 'cancelled' &&
-        (order.type === 'purchase order' ? order.status === 'pending' : order.status !== 'delivered') && (
+        getNextStatus(order.status, order.type) && (
           <button
             onClick={() => {
               setSelectedOrder(order);
@@ -446,13 +487,15 @@ const Orders = () => {
         </button>
       )}
 
-      <button
-        onClick={() => handleEdit(order)}
-        className="srf-row-action text-slate-500 hover:bg-slate-100"
-        title="Edit"
-      >
-        <Edit2 className="h-4 w-4" />
-      </button>
+      {order.type !== 'return order' && (
+        <button
+          onClick={() => handleEdit(order)}
+          className="srf-row-action text-slate-500 hover:bg-slate-100"
+          title="Edit"
+        >
+          <Edit2 className="h-4 w-4" />
+        </button>
+      )}
       <button
         onClick={() => { setSelectedOrder(order); setShowDeleteModal(true); }}
         className="srf-row-action text-rose-500 hover:bg-rose-50"
@@ -465,7 +508,7 @@ const Orders = () => {
 
   return (
     <div className="srf-page">
-      <PageHeader title="Orders" subtitle="Sell and purchase orders across your team">
+      <PageHeader title="Orders" subtitle="Sell, purchase and return orders across your team">
         <button onClick={handleExportToExcel} className="srf-btn srf-btn-secondary" title="Export to Excel">
           <Download className="h-4 w-4 text-slate-400" />
           Export
@@ -507,6 +550,7 @@ const Orders = () => {
               <option value="">All types</option>
               <option value="sell order">Sell Order</option>
               <option value="purchase order">Purchase Order</option>
+              <option value="return order">Return Order</option>
             </select>
 
             <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
@@ -636,7 +680,9 @@ const Orders = () => {
         <div className="srf-modal-backdrop" onClick={handleCloseModal}>
           <div className="srf-modal-panel max-w-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="srf-modal-header">
-              <h3 className="srf-modal-title">{selectedOrder ? 'Edit Order' : 'New Order'}</h3>
+              <h3 className="srf-modal-title">
+                {selectedOrder ? 'Edit Order' : isReturnForm ? 'New Return Order' : 'New Order'}
+              </h3>
               <button onClick={handleCloseModal} className="srf-icon-btn">
                 <X className="h-5 w-5" />
               </button>
@@ -650,17 +696,32 @@ const Orders = () => {
                     required
                     value={formData.type}
                     disabled={!!selectedOrder}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value, customerName: '' })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, type: e.target.value, customerName: '' });
+                      setReturnDraft({ order: null, lines: [] });
+                      setRestock(false);
+                    }}
                     className="w-full disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
                   >
                     <option value="sell order">Sell Order</option>
                     <option value="purchase order">Purchase Order</option>
+                    <option value="return order">Return Order</option>
                   </select>
                   {selectedOrder && (
                     <p className="mt-1 text-[11px] text-slate-400">Order type cannot be changed after creation.</p>
                   )}
                 </div>
 
+                {isReturnForm ? (
+                  <div>
+                    <label className="mb-1.5 block">Customer</label>
+                    <div className="flex h-[42px] items-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 text-[13px] text-slate-500">
+                      {returnDraft.order
+                        ? <span className="truncate font-semibold text-slate-800">{returnDraft.order.customerName?.name || '—'}</span>
+                        : 'Taken from the order you pick below'}
+                    </div>
+                  </div>
+                ) : (
                 <div>
                   <label className="mb-1.5 block">
                     {formData.type === 'purchase order' ? 'Vendor' : 'Customer'}
@@ -684,8 +745,17 @@ const Orders = () => {
                     }
                   </select>
                 </div>
+                )}
               </div>
 
+              {isReturnForm ? (
+                <div>
+                  <label className="mb-1.5 block">
+                    {returnDraft.order ? 'Items coming back' : 'Which order are the goods coming back from?'}
+                  </label>
+                  <ReturnOrderPicker value={returnDraft} onChange={setReturnDraft} showAlert={showAlert} />
+                </div>
+              ) : (
               <div>
                 <label className="mb-1.5 block">Items</label>
                 <div className="space-y-2">
@@ -781,6 +851,25 @@ const Orders = () => {
                   )}
                 </div>
               </div>
+              )}
+
+              {isReturnForm && (
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
+                  <input
+                    type="checkbox"
+                    checked={restock}
+                    onChange={(e) => setRestock(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold text-slate-900">Add the returned pieces back to stock</span>
+                    <span className="block text-[11px] text-slate-500">
+                      Tick for saleable pieces that came back. Leave off for damaged goods — they are written off.
+                      Points earned on the returned pieces come off the leaderboard either way.
+                    </span>
+                  </span>
+                </label>
+              )}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -815,7 +904,7 @@ const Orders = () => {
                 Cancel
               </button>
               <button type="submit" onClick={handleSubmit} className="srf-btn srf-btn-primary">
-                {selectedOrder ? 'Save Changes' : 'Create Order'}
+                {selectedOrder ? 'Save Changes' : isReturnForm ? 'Record Return' : 'Create Order'}
               </button>
             </div>
           </div>
@@ -897,7 +986,7 @@ const Orders = () => {
         isOpen={showDetailModal}
         onClose={() => setShowDetailModal(false)}
         order={selectedOrder}
-        actions={selectedOrder && (
+        actions={selectedOrder && selectedOrder.type !== 'return order' && (
           <button
             onClick={() => {
               setShowDetailModal(false);

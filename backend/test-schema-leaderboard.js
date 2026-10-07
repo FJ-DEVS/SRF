@@ -27,7 +27,7 @@ function query(value) {
   };
 }
 
-function setup() {
+function setup({ returns = [] } = {}) {
   const scheme = {
     _id: 'september', name: 'Monthly scheme', runBy: 'SRF TRADES',
     fromDate: new Date('2026-09-01'), toDate: new Date('2026-09-30'),
@@ -48,16 +48,16 @@ function setup() {
       countDocuments: async () => 1,
       findById: async (id) => id === scheme._id ? scheme : null
     },
-    '../models/Order': { find: () => query([
-      { customerName: 'c1', items: [{ item: 'item', quantity: 143 }], createdByType: 'salesman', createdBy: 'rahul' },
-      { customerName: 'c2', items: [{ item: 'item', quantity: 128 }], createdByType: 'salesman', createdBy: 'faiz' },
-      { customerName: 'c3', items: [{ item: 'item', quantity: 80 }], createdByType: 'admin' }
+    '../models/Order': { find: (filter) => query(filter.type === 'return order' ? returns : [
+      { _id: 'o1', customerName: 'c1', items: [{ item: 'item', quantity: 143 }], createdByType: 'salesman', createdBy: 'rahul' },
+      { _id: 'o2', customerName: 'c2', items: [{ item: 'item', quantity: 128 }], createdByType: 'salesman', createdBy: 'faiz' },
+      { _id: 'o3', customerName: 'c3', items: [{ item: 'item', quantity: 80 }], createdByType: 'admin' }
     ]) },
-    '../models/Customer': { find: () => query([
+    '../models/Customer': { find: (filter) => query([
       { _id: 'c1', name: 'Glass Point', assignedSalesman: 'rahul' },
       { _id: 'c2', name: 'S R INTERIO', assignedSalesman: 'faiz' },
       { _id: 'c3', name: 'Unassigned customer' }
-    ]) },
+    ].filter((c) => !filter?._id?.$in || filter._id.$in.includes(c._id))) },
     '../models/Salesman': Salesman,
     '../models/Category': { find: () => query([{ _id: 'category', name: 'Plywood' }]) },
     '../models/Item': { find: () => query([{ _id: 'item', category: 'Plywood' }]) },
@@ -146,4 +146,16 @@ test('salesman remains unable to edit schemes and missing schemes return 404', a
   assert.equal((await request('/:id', { method: 'put' })).statusCode, 403);
   assert.equal((await request('/:id', { method: 'delete' })).statusCode, 403);
   assert.equal((await request('/salesman/:id/leaderboard', { id: 'missing' })).statusCode, 404);
+});
+
+test('return orders take back only the points of the returned lines, charged to the source order\'s schema', async () => {
+  const { request } = setup({ returns: [
+    { returnOf: 'o1', items: [{ item: 'item', quantity: 50 }] },
+    { returnOf: 'o1', items: [{ item: 'other-item', quantity: 5 }] },
+    { returnOf: 'o3', items: [{ item: 'item', quantity: 80 }] }
+  ] });
+  const result = await request('/:id/leaderboard', { token: 'admin' });
+  const rows = result.body.data.leaderboard;
+  assert.deepEqual(rows.map((row) => [row.customerId, row.points, row.rank]), [['c2', 128, 1], ['c1', 93, 2]]);
+  assert.equal(rows[1].tier, null);
 });

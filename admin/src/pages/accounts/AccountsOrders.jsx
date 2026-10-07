@@ -321,6 +321,7 @@ const AccountsOrders = () => {
               <option value="">All types</option>
               <option value="sell order">Sell Order</option>
               <option value="purchase order">Purchase Order</option>
+              <option value="return order">Return Order</option>
             </select>
 
             <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>

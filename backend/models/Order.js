@@ -28,9 +28,24 @@ const orderSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Order type is required'],
     enum: {
-      values: ['sell order', 'purchase order'],
-      message: 'Type must be either "sell order" or "purchase order"'
+      values: ['sell order', 'purchase order', 'return order'],
+      message: 'Type must be "sell order", "purchase order" or "return order"'
     }
+  },
+  // Return orders only: the sell order the goods came back from. Each line of
+  // a return is capped at what that order sold (less earlier returns), and the
+  // incentive points those lines earned are taken back on the leaderboard.
+  returnOf: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order',
+    default: null,
+    index: true
+  },
+  // Return orders only: whether the returned pieces were put back into item
+  // stock when the return was recorded (damaged goods usually are not).
+  restocked: {
+    type: Boolean,
+    default: false
   },
   items: [{
     item: {

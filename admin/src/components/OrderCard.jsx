@@ -49,8 +49,8 @@ const OrderCard = ({ order, onClick, actions = null, footer = null, maxItems = 3
         </div>
         <p className="shrink-0 whitespace-nowrap text-right">
           {showAmount && (
-            <span className="font-display text-[15px] font-bold tabular-nums text-slate-900">
-              {formatMoney(orderTotal(order))}
+            <span className={`font-display text-[15px] font-bold tabular-nums ${order.type === 'return order' ? 'text-rose-600' : 'text-slate-900'}`}>
+              {order.type === 'return order' ? '−' : ''}{formatMoney(orderTotal(order))}
             </span>
           )}
           <span className={`text-[11px] font-medium tabular-nums text-slate-400 ${showAmount ? 'ml-1.5' : ''}`}>
