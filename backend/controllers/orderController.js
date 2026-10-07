@@ -76,6 +76,55 @@ const sendWhatsAppMessage = async (phone, customerName) => {
   }
 };
 
+// Sell-order statuses a return can be recorded against — the goods have left
+// the shelf, so some of them may come back
+const RETURNABLE_STATUSES = ['rolled', 'billed', 'delivered'];
+
+// What is left to return on one sell order: per item, what was sold, what has
+// already come back on earlier return orders, and the difference. Resolves to
+// { error, status } when the order cannot take a return at all.
+const returnableLinesFor = async (orderId, session = null) => {
+  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    return { error: 'Select the sell order the goods came back from', status: 400 };
+  }
+  const original = await Order.findById(orderId)
+    .populate('items.item', 'name price category')
+    .populate('customerName', 'name phone')
+    .session(session);
+  if (!original) return { error: 'Original order not found', status: 404 };
+  if (original.type !== 'sell order') {
+    return { error: 'Returns can only be recorded against sell orders', status: 400 };
+  }
+  if (!RETURNABLE_STATUSES.includes(original.status)) {
+    return {
+      error: `Only ${RETURNABLE_STATUSES.join(', ')} sell orders can take a return — this one is "${original.status}"`,
+      status: 400
+    };
+  }
+
+  const earlier = await Order.find({ type: 'return order', returnOf: original._id })
+    .select('items')
+    .session(session);
+  const returnedByItem = new Map();
+  for (const ret of earlier) {
+    for (const line of ret.items) {
+      const key = String(line.item);
+      returnedByItem.set(key, (returnedByItem.get(key) || 0) + (line.quantity || 0));
+    }
+  }
+
+  // One line per item even if the order listed it twice
+  const byItem = new Map();
+  for (const line of original.items) {
+    const key = String(line.item?._id || line.item);
+    if (!byItem.has(key)) byItem.set(key, { item: line.item, ordered: 0, returned: returnedByItem.get(key) || 0 });
+    byItem.get(key).ordered += line.quantity || 0;
+  }
+  const lines = [...byItem.values()].map((l) => ({ ...l, remaining: Math.max(l.ordered - l.returned, 0) }));
+
+  return { original, lines };
+};
+
 // Create order — admin (any type); salesman (sell orders only)
 exports.createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -132,10 +181,62 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    // Return orders: goods coming back from a sell order. Every line is capped
+    // at what that order sold less what earlier returns already took back, the
+    // customer is copied from it, and the return is complete the moment it is
+    // recorded — there is no roll / bill / deliver chain to walk.
+    let returnOf = null;
+    let returnCustomer = null;
+    let restocked = false;
+    if (type === 'return order') {
+      const check = await returnableLinesFor(req.body.returnOf, session);
+      if (check.error) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(check.status).json({ success: false, message: check.error });
+      }
+      const openByItem = new Map(check.lines.map((l) => [String(l.item?._id || l.item), l]));
+      const seen = new Set();
+      for (const line of items) {
+        const key = String(line.item);
+        const open = openByItem.get(key);
+        if (!open) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ success: false, message: 'A returned item is not on the original order' });
+        }
+        if (seen.has(key)) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ success: false, message: 'The same item is listed twice on the return' });
+        }
+        seen.add(key);
+        if (!Number.isInteger(line.quantity) || line.quantity > open.remaining) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({
+            success: false,
+            message: `Only ${open.remaining} of "${open.item?.name || 'this item'}" can still be returned on that order`
+          });
+        }
+      }
+      returnOf = check.original._id;
+      returnCustomer = check.original.customerName?._id || check.original.customerName || null;
+
+      // Pieces that came back in saleable condition go straight back into
+      // stock; damaged ones are simply written off, so this is the caller's call
+      restocked = Boolean(req.body.restock);
+      if (restocked) {
+        for (const line of items) {
+          await Item.findByIdAndUpdate(line.item, { $inc: { quantity: line.quantity } }, { session });
+        }
+      }
+    }
+
     // Sell orders reference a Customer, purchase orders reference a Vendor
     const customerModel = type === 'purchase order' ? 'Vendor' : 'Customer';
 
-    if (customerName) {
+    if (customerName && type !== 'return order') {
       if (customerModel === 'Customer') {
         const customer = await Customer.findById(customerName).session(session);
         if (!customer) {
@@ -225,13 +326,15 @@ exports.createOrder = async (req, res) => {
     const order = new Order({
       type,
       items,
-      customerName,
+      customerName: type === 'return order' ? returnCustomer : customerName,
       customerModel,
       cargo: cargo || null,
       notes: notes || null,
       createdBy: req.user.role === 'salesman' ? req.user.id : 'Admin',
       createdByType: req.user.role === 'admin' ? 'admin' : 'salesman',
-      status: 'pending'
+      status: type === 'return order' ? 'completed' : 'pending',
+      returnOf,
+      restocked
     });
 
     await order.save({ session });
@@ -243,7 +346,8 @@ exports.createOrder = async (req, res) => {
     const populateOptions = [
       { path: 'items.item' },
       { path: 'customerName' },
-      { path: 'cargo' }
+      { path: 'cargo' },
+      { path: 'returnOf', select: 'createdAt billNumber status' }
     ];
     
     if (order.createdByType === 'salesman') {
@@ -255,7 +359,7 @@ exports.createOrder = async (req, res) => {
     // Send push notification to admin
     const salesmanName = req.user.role === 'salesman' ? req.user.name : 'Admin';
     await sendPushNotification(
-      `New order placed by ${salesmanName}`,
+      type === 'return order' ? `Return recorded by ${salesmanName}` : `New order placed by ${salesmanName}`,
       {
         orderId: order._id,
         salesmanName,
@@ -264,10 +368,11 @@ exports.createOrder = async (req, res) => {
     );
 
     getIO().emit('orders_updated');
+    if (restocked) getIO().emit('items_updated');
 
     res.status(201).json({
       success: true,
-      message: 'Order created successfully',
+      message: type === 'return order' ? 'Return order recorded successfully' : 'Order created successfully',
       data: order
     });
 
@@ -417,7 +522,9 @@ exports.getAllOrders = async (req, res) => {
     } else if (req.user.role === 'crm') {
       conditions.push({ type: 'sell order', status: crmStatusMatch(status) });
     } else if (status) {
-      conditions.push({ status });
+      // One status, or a comma-separated set ("rolled,billed,delivered")
+      const statuses = String(status).split(',').map((s) => s.trim()).filter(Boolean);
+      if (statuses.length) conditions.push({ status: statuses.length > 1 ? { $in: statuses } : statuses[0] });
     }
     if (type) conditions.push({ type });
     if (customer && mongoose.Types.ObjectId.isValid(customer)) conditions.push({ customerName: customer });
@@ -526,7 +633,8 @@ exports.getAllOrders = async (req, res) => {
         .populate('items.item')
         .populate('customerName')
         .populate('cargo')
-        .populate('rolledBy', 'name username');
+        .populate('rolledBy', 'name username')
+        .populate('returnOf', 'createdAt billNumber status');
       const byId = new Map(found.map((o) => [String(o._id), o]));
       orders = ids.map((id) => byId.get(String(id))).filter(Boolean);
     } else {
@@ -535,6 +643,7 @@ exports.getAllOrders = async (req, res) => {
         .populate('customerName')
         .populate('cargo')
         .populate('rolledBy', 'name username')
+        .populate('returnOf', 'createdAt billNumber status')
         .sort(sortSpec)
         .skip(skip)
         .limit(limitNum);
@@ -573,7 +682,8 @@ exports.getOrder = async (req, res) => {
     const order = await Order.findById(req.params.id)
       .populate('items.item')
       .populate('customerName')
-      .populate('cargo');
+      .populate('cargo')
+      .populate('returnOf', 'createdAt billNumber status');
     
     // Conditionally populate createdBy if it's a salesman
     if (order && order.createdByType === 'salesman') {
@@ -622,6 +732,25 @@ exports.getOrder = async (req, res) => {
       success: false, 
       message: 'Internal server error' 
     });
+  }
+};
+
+// What can still come back from one sell order — feeds the admin's "record a
+// return" form: the order itself plus, per item, sold / already returned /
+// still returnable.
+exports.getReturnable = async (req, res) => {
+  try {
+    const check = await returnableLinesFor(req.params.id);
+    if (check.error) {
+      return res.status(check.status).json({ success: false, message: check.error });
+    }
+    res.status(200).json({
+      success: true,
+      data: { order: check.original, items: check.lines }
+    });
+  } catch (error) {
+    console.error('Get returnable error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -769,6 +898,8 @@ exports.updateOrderStatus = async (req, res) => {
     // Valid status transitions based on order type
     const validTransitions = order.type === 'purchase order'
       ? { 'pending': ['completed'] }
+      : order.type === 'return order'
+      ? {} // a return is complete the moment it is recorded — nothing moves it
       : {
           'pending': ['to roll'],
           'to roll': ['rolled'],
@@ -1032,6 +1163,16 @@ exports.updateOrder = async (req, res) => {
       });
     }
     const customerModel = existingOrder.type === 'purchase order' ? 'Vendor' : 'Customer';
+
+    // A return's lines were checked against its source order and may already
+    // have gone back into stock and off the leaderboard — they are not edited
+    // in place. Delete the return and record it again instead.
+    if (existingOrder.type === 'return order' && (items !== undefined || customerName !== undefined || status !== undefined)) {
+      return res.status(400).json({
+        success: false,
+        message: 'The items, customer and status of a return order cannot be changed — delete it and record the return again'
+      });
+    }
 
     if (customerName !== undefined && customerName) {
       if (customerModel === 'Customer') {

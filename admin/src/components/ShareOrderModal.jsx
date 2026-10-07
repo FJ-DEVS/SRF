@@ -3,6 +3,7 @@ import { X, Copy, Download, Share2 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { formatStatus, convertModernColorsToRgb } from '../utils/shareUtils';
 import { STATUS_COLORS } from '../utils/orderStatus';
+import { typeStyle } from '../utils/orderType';
 import logo1 from '../assets/logo1.png';
 
 const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
@@ -139,8 +140,8 @@ const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
   const isWebShareSupported = true; // Always show the button
 
   // Format order data for display
-  const orderType = order.type === 'sell order' ? 'Sell Order' : 'Purchase Order';
-  const customerLabel = order.type === 'sell order' ? 'Customer' : 'Vendor';
+  const orderType = typeStyle(order.type).label;
+  const customerLabel = order.type === 'purchase order' ? 'Vendor' : 'Customer';
   const customerName = order.customerName?.name || '-';
   const date = new Date(order.createdAt).toLocaleDateString('en-IN', {
     year: 'numeric',

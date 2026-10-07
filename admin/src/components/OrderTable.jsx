@@ -48,6 +48,12 @@ const OrderTable = ({ orders, onRowClick, renderActions }) => (
               <div className="mt-1">
                 <TypeBadge type={order.type} />
               </div>
+              {order.returnOf && (
+                <p className="mt-1 truncate text-[10px] text-slate-400">
+                  From <span className="font-mono">#{String(order.returnOf._id || order.returnOf).slice(-8)}</span>
+                  {order.returnOf.billNumber ? ` · Bill #${order.returnOf.billNumber}` : ''}
+                </p>
+              )}
             </td>
             <td className="min-w-[240px]">
               <OrderItemsList items={order.items} max={3} />
@@ -62,8 +68,8 @@ const OrderTable = ({ orders, onRowClick, renderActions }) => (
               </div>
             </td>
             <td className="whitespace-nowrap text-right">
-              <p className="font-display text-[15px] font-bold tabular-nums text-slate-900">
-                {formatMoney(orderTotal(order))}
+              <p className={`font-display text-[15px] font-bold tabular-nums ${order.type === 'return order' ? 'text-rose-600' : 'text-slate-900'}`}>
+                {order.type === 'return order' ? '−' : ''}{formatMoney(orderTotal(order))}
               </p>
               <p className="text-[11px] font-medium tabular-nums text-slate-400">{orderQty(order)} pcs</p>
             </td>

@@ -108,6 +108,31 @@ const computePointsForSchema = async (schema) => {
       sellers.get(customerId).add(String(order.createdBy));
     }
   }
+
+  // Goods sent back on a return order give up the points they earned — only
+  // those lines, not the whole order. A return is tied to the sell order it
+  // reverses, so it is charged to the schema that order scored in, whenever
+  // the return itself was recorded.
+  if (orders.length > 0) {
+    const customerByOrder = new Map(orders.map((o) => [String(o._id), String(o.customerName)]));
+    const returns = await Order.find({
+      type: 'return order',
+      returnOf: { $in: orders.map((o) => o._id) }
+    }).select('returnOf items');
+
+    for (const ret of returns) {
+      const customerId = customerByOrder.get(String(ret.returnOf));
+      if (!customerId) continue;
+      for (const line of ret.items) {
+        const perUnit = pointsByItem.get(String(line.item));
+        if (perUnit === undefined) continue;
+        totals.set(customerId, (totals.get(customerId) || 0) - perUnit * (line.quantity || 0));
+      }
+    }
+    for (const [customerId, points] of totals) {
+      if (points < 0) totals.set(customerId, 0);
+    }
+  }
   return { totals, sellers };
 };
 

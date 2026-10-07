@@ -2,7 +2,7 @@ import React from 'react';
 import StatusBadge from './StatusBadge';
 import TypeBadge from './TypeBadge';
 import BillBadge from './BillBadge';
-import { X, Package, Truck, Layers, IndianRupee } from 'lucide-react';
+import { X, Package, Truck, Layers, IndianRupee, Undo2 } from 'lucide-react';
 import { orderTotal, orderQty, formatMoney, formatDateTime } from '../utils/orderMath';
 
 const Stat = ({ icon, label, value, sub, accent = false, muted = false }) => {
@@ -34,6 +34,8 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
 
   const items = order.items || [];
   const cargoName = order.cargo?.name;
+  const isReturn = order.type === 'return order';
+  const source = isReturn && order.returnOf && typeof order.returnOf === 'object' ? order.returnOf : null;
 
   return (
     <div className="srf-modal-backdrop" onClick={onClose}>
@@ -59,7 +61,7 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
 
           {/* Summary strip */}
           <div className="grid grid-cols-3 gap-2">
-            <Stat icon={IndianRupee} label="Amount" value={formatMoney(orderTotal(order))} accent />
+            <Stat icon={IndianRupee} label={isReturn ? 'Returned value' : 'Amount'} value={`${isReturn ? '−' : ''}${formatMoney(orderTotal(order))}`} accent />
             <Stat
               icon={Layers}
               label="Quantity"
@@ -91,10 +93,30 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
             </div>
           </div>
 
+          {isReturn && (
+            <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50/50 p-3.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-rose-600 ring-1 ring-rose-200">
+                <Undo2 className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 text-[12px] text-slate-600">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-rose-600">Returned from</p>
+                <p className="mt-0.5">
+                  Order <span className="font-mono font-semibold text-slate-800">#{String(source?._id || order.returnOf || '').slice(-8) || '—'}</span>
+                  {source?.createdAt && <> · {formatDateTime(source.createdAt)}</>}
+                  {source?.billNumber && <> · Bill #{source.billNumber}</>}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {order.restocked ? 'Returned pieces were added back to stock.' : 'Returned pieces were written off (not restocked).'}
+                  {' '}Points earned on these pieces are taken off the leaderboard.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Items */}
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Items ({items.length})
+              {isReturn ? 'Returned items' : 'Items'} ({items.length})
             </p>
             <div className="overflow-hidden rounded-xl border border-slate-200">
               <div className="divide-y divide-slate-100">

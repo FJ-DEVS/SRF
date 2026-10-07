@@ -450,6 +450,7 @@ const Consolidation = () => {
             <option value="">All Types</option>
             <option value="sell order">Sell Order</option>
             <option value="purchase order">Purchase Order</option>
+            <option value="return order">Return Order</option>
           </select>
 
           <select

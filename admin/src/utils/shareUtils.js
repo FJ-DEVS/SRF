@@ -1,3 +1,5 @@
+import { typeStyle } from './orderType';
+
 /**
  * Format a raw order status (e.g. "cancellation_requested") into a readable label
  * (e.g. "Cancellation Requested").
@@ -18,8 +20,8 @@ export const formatStatus = (status) => {
  * @returns {string} Formatted order details as text
  */
 export const generateOrderText = (order) => {
-  const orderType = order.type === 'sell order' ? 'Sell Order' : 'Purchase Order';
-  const customerLabel = order.type === 'sell order' ? 'Customer' : 'Vendor';
+  const orderType = typeStyle(order.type).label;
+  const customerLabel = order.type === 'purchase order' ? 'Vendor' : 'Customer';
   const customerName = order.customerName?.name || '-';
   const date = new Date(order.createdAt).toLocaleDateString();
   const status = formatStatus(order.status);
