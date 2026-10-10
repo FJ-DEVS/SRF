@@ -109,14 +109,16 @@ const computePointsForSchema = async (schema) => {
     }
   }
 
-  // Goods sent back on a return order give up the points they earned — only
-  // those lines, not the whole order. A return is tied to the sell order it
-  // reverses, so it is charged to the schema that order scored in, whenever
-  // the return itself was recorded.
+  // Goods sent back on a completed return order give up the points they
+  // earned — only those lines, not the whole order. Pending and cancelled
+  // returns change nothing. A return is tied to the sell order it reverses,
+  // so it is charged to the schema that order scored in, whenever the return
+  // itself was recorded.
   if (orders.length > 0) {
     const customerByOrder = new Map(orders.map((o) => [String(o._id), String(o.customerName)]));
     const returns = await Order.find({
       type: 'return order',
+      status: 'completed',
       returnOf: { $in: orders.map((o) => o._id) }
     }).select('returnOf items');
 

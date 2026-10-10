@@ -4,6 +4,7 @@ import { getSocket } from '../../utils/socket';
 import ConfirmModal from '../../components/ConfirmModal';
 import AlertModal from '../../components/AlertModal';
 import OrderDetailModal from '../../components/OrderDetailModal';
+import ShareOrderModal from '../../components/ShareOrderModal';
 import Pagination from '../../components/Pagination';
 import SortSelect from '../../components/SortSelect';
 import StatusBadge from '../../components/StatusBadge';
@@ -11,7 +12,8 @@ import BillBadge from '../../components/BillBadge';
 import CargoBadge from '../../components/CargoBadge';
 import { orderQty, formatDate } from '../../utils/orderMath';
 import { callHref } from '../../utils/contact';
-import { Search, X, Phone, CalendarDays, PackageCheck, ShoppingCart, ChevronRight } from 'lucide-react';
+import useCargoOptions from '../../utils/useCargoOptions';
+import { Search, X, Phone, CalendarDays, PackageCheck, ShoppingCart, ChevronRight, Share2 } from 'lucide-react';
 
 // Rows per page: 10 by default, adjustable from the pager
 const PAGE_SIZES = [10, 20, 30];
@@ -82,7 +84,7 @@ const CallLink = ({ phone, className = '', children }) => {
 
 // Just the basics — who, which bill, where it stands, how big. The items and
 // the full customer are one tap away in the detail view.
-const OrderRow = ({ order, onOpen }) => {
+const OrderRow = ({ order, onOpen, onShare }) => {
   const items = order.items || [];
   return (
     <div className="flex cursor-pointer items-center gap-3 p-3.5" onClick={() => onOpen(order)}>
@@ -103,6 +105,15 @@ const OrderRow = ({ order, onOpen }) => {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onShare(order); }}
+          className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600 transition-colors hover:bg-sky-100"
+          title="Share Order"
+          aria-label="Share order"
+        >
+          <Share2 className="h-4 w-4" />
+        </button>
         <CallLink phone={order.customerName?.phone} className="h-10 w-10 rounded-xl">
           <Phone className="h-4 w-4" />
         </CallLink>
@@ -120,6 +131,8 @@ const CrmOrders = () => {
   // does not fire a request per keystroke
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('billed');
+  const [cargoFilter, setCargoFilter] = useState('');
+  const cargos = useCargoOptions();
   const [sortBy, setSortBy] = useState('newest');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -129,6 +142,7 @@ const CrmOrders = () => {
   const [pagination, setPagination] = useState({ total: 0, pages: 0 });
 
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [shareOrder, setShareOrder] = useState(null);
   const [deliverTarget, setDeliverTarget] = useState(null);
   const [alertConfig, setAlertConfig] = useState(null);
 
@@ -139,7 +153,7 @@ const CrmOrders = () => {
   const fetchOrders = useCallback(async () => {
     const id = ++requestId.current;
     try {
-      const params = { search: query, status: statusFilter, sort: sortBy, page: currentPage, limit: pageSize };
+      const params = { search: query, status: statusFilter, cargo: cargoFilter, sort: sortBy, page: currentPage, limit: pageSize };
       // The date period is a range on the order date: from the start of the
       // first day up to (not including) the day after the last
       if (fromDate) params.since = dayInstant(fromDate);
@@ -154,7 +168,7 @@ const CrmOrders = () => {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [query, statusFilter, sortBy, fromDate, toDate, currentPage, pageSize]);
+  }, [query, statusFilter, cargoFilter, sortBy, fromDate, toDate, currentPage, pageSize]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -163,7 +177,7 @@ const CrmOrders = () => {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  useEffect(() => { setCurrentPage(1); }, [query, statusFilter, sortBy, fromDate, toDate, pageSize]);
+  useEffect(() => { setCurrentPage(1); }, [query, statusFilter, cargoFilter, sortBy, fromDate, toDate, pageSize]);
 
   // Orders get billed and delivered all day — keep the list live
   useEffect(() => {
@@ -195,12 +209,13 @@ const CrmOrders = () => {
   };
 
   const hasRange = Boolean(fromDate || toDate);
-  const hasFilters = Boolean(searchTerm || hasRange || statusFilter !== 'billed' || sortBy !== 'newest');
+  const hasFilters = Boolean(searchTerm || hasRange || cargoFilter || statusFilter !== 'billed' || sortBy !== 'newest');
 
   const clearFilters = () => {
     setSearchTerm('');
     setQuery('');
     setStatusFilter('billed');
+    setCargoFilter('');
     setSortBy('newest');
     setFromDate('');
     setToDate('');
@@ -237,7 +252,7 @@ const CrmOrders = () => {
           )}
         </div>
 
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {STATUS_TABS.map((tab) => (
             <button
               key={tab.value || 'all'}
@@ -248,18 +263,28 @@ const CrmOrders = () => {
               {tab.label}
             </button>
           ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <SortSelect value={sortBy} onChange={setSortBy} options={SORT_OPTIONS} className="min-w-0 flex-1 sm:max-w-[13rem] sm:flex-none" />
           <button
             type="button"
             onClick={() => setShowDates((v) => !v)}
-            className={`srf-chip ml-auto !py-2.5 ${showDates || hasRange ? 'srf-chip-active' : ''}`}
+            className={`srf-chip ml-auto ${showDates || hasRange ? 'srf-chip-active' : ''}`}
           >
             <CalendarDays className="h-3.5 w-3.5" />
             {rangeLabel}
           </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <SortSelect value={sortBy} onChange={setSortBy} options={SORT_OPTIONS} className="min-w-0 sm:w-[13rem]" />
+          <select
+            value={cargoFilter}
+            onChange={(e) => setCargoFilter(e.target.value)}
+            aria-label="Cargo"
+            title="Cargo"
+            className="min-w-0 sm:w-[13rem]"
+          >
+            <option value="">All cargos</option>
+            {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+          </select>
         </div>
 
         {/* Date period */}
@@ -344,7 +369,7 @@ const CrmOrders = () => {
           <>
             <div className="divide-y divide-slate-100">
               {orders.map((order) => (
-                <OrderRow key={order._id} order={order} onOpen={setSelectedOrder} />
+                <OrderRow key={order._id} order={order} onOpen={setSelectedOrder} onShare={setShareOrder} />
               ))}
             </div>
 
@@ -371,6 +396,14 @@ const CrmOrders = () => {
         order={selectedOrder}
         actions={selectedOrder && (
           <>
+            <button
+              type="button"
+              onClick={() => { setShareOrder(selectedOrder); setSelectedOrder(null); }}
+              className="srf-btn srf-btn-secondary"
+            >
+              <Share2 className="h-4 w-4 text-sky-600" />
+              Share
+            </button>
             <CallLink phone={selectedOrder.customerName?.phone} className="h-9 rounded-lg px-3.5 text-[13px]">
               <Phone className="h-4 w-4" />
               Call
@@ -387,6 +420,14 @@ const CrmOrders = () => {
             )}
           </>
         )}
+      />
+
+      {/* Same order image as the admin console: copy, download or share */}
+      <ShareOrderModal
+        isOpen={Boolean(shareOrder)}
+        onClose={() => setShareOrder(null)}
+        order={shareOrder}
+        showAlert={showAlert}
       />
 
       <ConfirmModal

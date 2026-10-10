@@ -12,8 +12,72 @@ import { ITEM_SORT_OPTIONS, DEFAULT_SORT } from '../utils/sortOptions';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, Tag, TrendingUp, Package,
   ArrowDownToLine, ArrowUpFromLine, IndianRupee, Boxes, Check, History,
-  Download, Upload, AlertTriangle, ShieldCheck
+  Download, Upload, AlertTriangle, ShieldCheck, PackageX, ArchiveRestore
 } from 'lucide-react';
+
+// Asks how many pieces to move between an item's stock and its damaged count
+const PiecesModal = ({ title, itemName, available, availableLabel, hint, confirmLabel, confirmClass, onClose, onConfirm }) => {
+  const [qty, setQty] = useState('');
+  const [saving, setSaving] = useState(false);
+  const pieces = Number(qty);
+  const valid = Number.isInteger(pieces) && pieces >= 1 && pieces <= available;
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if (!valid || saving) return;
+    setSaving(true);
+    try {
+      await onConfirm(pieces);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="srf-modal-backdrop" onClick={onClose}>
+      <div className="srf-modal-panel max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="srf-modal-header">
+          <div className="min-w-0">
+            <h3 className="srf-modal-title">{title}</h3>
+            <p className="truncate text-[11px] text-slate-400">{itemName}</p>
+          </div>
+          <button onClick={onClose} className="srf-icon-btn shrink-0" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="srf-modal-body space-y-3">
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5 text-[13px]">
+            <span className="text-slate-500">{availableLabel}</span>
+            <span className="font-display text-base font-bold tabular-nums text-slate-900">{available}</span>
+          </div>
+          <div>
+            <label className="mb-1.5 block">Pieces</label>
+            <input
+              type="number"
+              min="1"
+              max={available}
+              required
+              autoFocus
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className="w-full"
+              placeholder={`1 – ${available}`}
+            />
+            <p className="mt-1 text-[11px] text-slate-400">{hint}</p>
+          </div>
+        </form>
+
+        <div className="srf-modal-footer">
+          <button type="button" onClick={onClose} className="srf-btn srf-btn-secondary">Cancel</button>
+          <button type="button" onClick={submit} disabled={!valid || saving} className={`srf-btn ${confirmClass}`}>
+            {saving ? 'Saving…' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Items = () => {
   const [searchParams] = useSearchParams();
@@ -64,17 +128,26 @@ const Items = () => {
   const [exportLoading, setExportLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
 
+  // 'stock' lists every item; 'damaged' only the pieces marked damaged
+  const [view, setView] = useState('stock');
+  const [damagedRows, setDamagedRows] = useState([]);
+  const [damagedSummary, setDamagedSummary] = useState({ items: 0, pieces: 0, value: 0 });
+  // The item whose stock is being marked damaged / the damaged row being restored
+  const [damageTarget, setDamageTarget] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState(null);
+
   useEffect(() => {
     fetchCategories();
   }, []);
 
   useEffect(() => {
-    fetchItems();
-  }, [searchTerm, sizeFilter, stockState, sortBy, currentPage, pageSize]);
+    if (view === 'damaged') fetchDamaged();
+    else fetchItems();
+  }, [view, searchTerm, sizeFilter, stockState, sortBy, currentPage, pageSize]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, sizeFilter, stockState, sortBy, pageSize]);
+  }, [view, searchTerm, sizeFilter, stockState, sortBy, pageSize]);
 
   const fetchCategories = async () => {
     try {
@@ -114,6 +187,31 @@ const Items = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Search and the category chips carry over; check level and sort are stock-only
+  const fetchDamaged = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/damaged-items', {
+        params: { search: searchTerm, category: sizeFilter, page: currentPage, limit: pageSize }
+      });
+      if (response.data.success) {
+        setDamagedRows(response.data.data);
+        setDamagedSummary(response.data.summary);
+        setPagination(response.data.pagination);
+      }
+    } catch (error) {
+      console.error('Error fetching damaged items:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const switchView = (next) => {
+    if (next === view) return;
+    setLoading(true);
+    setView(next);
   };
 
   const handlePageChange = (page) => {
@@ -319,6 +417,34 @@ const Items = () => {
     }
   };
 
+  /* ---------- Damaged stock ---------- */
+
+  const handleMarkDamaged = async (quantity) => {
+    try {
+      const response = await api.post('/damaged-items', { item: damageTarget._id, quantity });
+      if (response.data.success) {
+        setDamageTarget(null);
+        fetchItems();
+        showAlert('Marked Damaged', `${response.data.message}. Find them under Damaged.`, 'success');
+      }
+    } catch (error) {
+      showAlert('Error', error.response?.data?.message || 'Could not mark the pieces damaged', 'error');
+    }
+  };
+
+  const handleRestoreDamaged = async (quantity) => {
+    try {
+      const response = await api.post(`/damaged-items/${restoreTarget._id}/restore`, { quantity });
+      if (response.data.success) {
+        setRestoreTarget(null);
+        fetchDamaged();
+        showAlert('Restored', response.data.message, 'success');
+      }
+    } catch (error) {
+      showAlert('Error', error.response?.data?.message || 'Could not restore the pieces', 'error');
+    }
+  };
+
   /* ---------- Item CRUD ---------- */
 
   const handleSubmit = async (e) => {
@@ -440,6 +566,15 @@ const Items = () => {
         <Eye className="h-4 w-4" />
       </button>
       <button
+        onClick={(e) => { e.stopPropagation(); setDamageTarget(item); }}
+        disabled={item.quantity === 0}
+        className="srf-row-action text-orange-600 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40"
+        title="Mark damaged"
+        aria-label="Mark damaged"
+      >
+        <PackageX className="h-4 w-4" />
+      </button>
+      <button
         onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
         className="srf-row-action text-slate-500 hover:bg-slate-100"
         title="Edit"
@@ -491,6 +626,26 @@ const Items = () => {
         </button>
       </PageHeader>
 
+      {/* Stock / damaged views */}
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => switchView('stock')}
+          className={`srf-chip ${view === 'stock' ? 'srf-chip-active' : ''}`}
+        >
+          <Boxes className="h-3 w-3" />
+          Stock
+        </button>
+        <button
+          type="button"
+          onClick={() => switchView('damaged')}
+          className={`srf-chip ${view === 'damaged' ? 'srf-chip-active' : 'text-orange-700'}`}
+        >
+          <PackageX className="h-3 w-3" />
+          Damaged
+        </button>
+      </div>
+
       {/* Toolbar */}
       <div className="srf-toolbar">
         <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
@@ -504,12 +659,14 @@ const Items = () => {
               className="w-full !pl-9"
             />
           </div>
-          <SortSelect
-            value={sortBy}
-            onChange={setSortBy}
-            options={ITEM_SORT_OPTIONS}
-            className="w-full sm:ml-auto sm:w-auto"
-          />
+          {view === 'stock' && (
+            <SortSelect
+              value={sortBy}
+              onChange={setSortBy}
+              options={ITEM_SORT_OPTIONS}
+              className="w-full sm:ml-auto sm:w-auto"
+            />
+          )}
         </div>
 
         {/* Category chips */}
@@ -535,6 +692,7 @@ const Items = () => {
         </div>
 
         {/* Check level chips */}
+        {view === 'stock' && (
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -553,9 +711,11 @@ const Items = () => {
             Above check level
           </button>
         </div>
+        )}
       </div>
 
       {/* List */}
+      {view === 'stock' && (
       <div className="srf-card overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center p-12">
@@ -650,6 +810,121 @@ const Items = () => {
           </>
         )}
       </div>
+      )}
+
+      {/* Damaged list */}
+      {view === 'damaged' && (
+        <div className="srf-card overflow-hidden">
+          {loading ? (
+            <div className="flex items-center justify-center p-12">
+              <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-slate-600" />
+            </div>
+          ) : damagedRows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                <PackageX className="h-5 w-5" />
+              </span>
+              <p className="mt-3 text-sm font-semibold text-slate-700">No damaged items</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Mark damaged pieces from an item's row, or complete a return with damaged pieces.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 bg-orange-50/50 px-4 py-2.5 text-[12px] text-orange-900">
+                <span><span className="font-bold tabular-nums">{damagedSummary.items}</span> item{damagedSummary.items === 1 ? '' : 's'}</span>
+                <span><span className="font-bold tabular-nums">{damagedSummary.pieces}</span> damaged piece{damagedSummary.pieces === 1 ? '' : 's'}</span>
+                <span>Worth <span className="font-bold tabular-nums">₹{damagedSummary.value.toLocaleString('en-IN')}</span></span>
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <table className="srf-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th>Price</th>
+                      <th>Damaged</th>
+                      <th>Value</th>
+                      <th>In Stock</th>
+                      <th>Updated</th>
+                      <th className="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {damagedRows.map((row) => (
+                      <tr key={row._id}>
+                        <td className="max-w-[300px] truncate font-semibold text-slate-900">{row.item.name}</td>
+                        <td>
+                          {row.item.category
+                            ? <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">{row.item.category}</span>
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="font-medium text-slate-800">₹{row.item.price.toLocaleString('en-IN')}</td>
+                        <td>
+                          <span className="srf-badge bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200">{row.quantity}</span>
+                        </td>
+                        <td className="font-medium text-slate-800">₹{(row.quantity * row.item.price).toLocaleString('en-IN')}</td>
+                        <td className="tabular-nums">{row.item.quantity}</td>
+                        <td className="text-[12px] text-slate-500">{formatDate(row.updatedAt)}</td>
+                        <td>
+                          <div className="flex items-center justify-end">
+                            <button
+                              onClick={() => setRestoreTarget(row)}
+                              className="srf-row-action text-emerald-600 hover:bg-emerald-50"
+                              title="Restore to stock"
+                              aria-label="Restore to stock"
+                            >
+                              <ArchiveRestore className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile list */}
+              <div className="divide-y divide-slate-100 md:hidden">
+                {damagedRows.map((row) => (
+                  <div key={row._id} className="p-3.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{row.item.name}</p>
+                      <button
+                        onClick={() => setRestoreTarget(row)}
+                        className="srf-row-action shrink-0 text-emerald-600 hover:bg-emerald-50"
+                        title="Restore to stock"
+                        aria-label="Restore to stock"
+                      >
+                        <ArchiveRestore className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
+                      <span className="srf-badge bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200">{row.quantity} damaged</span>
+                      <span className="font-semibold text-slate-800">₹{(row.quantity * row.item.price).toLocaleString('en-IN')}</span>
+                      {row.item.category && (
+                        <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">{row.item.category}</span>
+                      )}
+                      <span className="text-[11px] text-slate-400">{row.item.quantity} in stock</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Pagination
+                currentPage={currentPage}
+                totalPages={pagination.pages}
+                totalItems={pagination.total}
+                itemsPerPage={pageSize}
+                onPageChange={handlePageChange}
+                onPageSizeChange={setPageSize}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {/* Add/Edit Modal */}
       {showModal && (
@@ -894,6 +1169,14 @@ const Items = () => {
             <div className="srf-modal-footer">
               <button onClick={closeDetail} className="srf-btn srf-btn-secondary">Close</button>
               <button
+                onClick={() => { const it = detailItem; closeDetail(); setDamageTarget(it); }}
+                disabled={detailItem.quantity === 0}
+                className="srf-btn border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
+              >
+                <PackageX className="h-3.5 w-3.5" />
+                Mark Damaged
+              </button>
+              <button
                 onClick={() => { const it = detailItem; closeDetail(); handleEdit(it); }}
                 className="srf-btn srf-btn-primary"
               >
@@ -915,6 +1198,36 @@ const Items = () => {
         type="danger"
         confirmLabel="Delete"
       />
+
+      {/* Mark stock damaged */}
+      {damageTarget && (
+        <PiecesModal
+          title="Mark Damaged"
+          itemName={damageTarget.name}
+          available={damageTarget.quantity}
+          availableLabel="In stock"
+          hint="These pieces come off the stock count and are listed under Damaged."
+          confirmLabel="Mark Damaged"
+          confirmClass="srf-btn-danger"
+          onClose={() => setDamageTarget(null)}
+          onConfirm={handleMarkDamaged}
+        />
+      )}
+
+      {/* Restore damaged pieces to stock */}
+      {restoreTarget && (
+        <PiecesModal
+          title="Restore to Stock"
+          itemName={restoreTarget.item.name}
+          available={restoreTarget.quantity}
+          availableLabel="Damaged"
+          hint="For pieces marked damaged by mistake or repaired since — they go back into stock."
+          confirmLabel="Restore"
+          confirmClass="srf-btn-success"
+          onClose={() => setRestoreTarget(null)}
+          onConfirm={handleRestoreDamaged}
+        />
+      )}
 
       {/* Alert Modal */}
       <AlertModal

@@ -199,7 +199,7 @@ const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
                   <p className="text-[11px] font-medium text-slate-400 tracking-wide">Order Receipt</p>
                 </div>
               </div>
-              <span className="shrink-0 inline-flex h-7 items-center justify-center rounded-full bg-white/10 px-3 text-[11px] leading-none font-semibold text-white ring-1 ring-inset ring-white/15 whitespace-nowrap">
+              <span className="shrink-0 inline-flex h-7 items-center justify-center rounded-full border border-white/15 bg-white/10 px-3 text-[11px] leading-none font-semibold text-white whitespace-nowrap">
                 {orderType}
               </span>
             </div>

@@ -36,6 +36,9 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
   const cargoName = order.cargo?.name;
   const isReturn = order.type === 'return order';
   const source = isReturn && order.returnOf && typeof order.returnOf === 'object' ? order.returnOf : null;
+  // Returns recorded before the per-line restock / damaged split carry only
+  // the order-wide restocked flag
+  const hasSplit = isReturn && items.some((l) => l.restockQuantity != null || l.damagedQuantity != null);
 
   return (
     <div className="srf-modal-backdrop" onClick={onClose}>
@@ -106,8 +109,21 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
                   {source?.billNumber && <> · Bill #{source.billNumber}</>}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {order.restocked ? 'Returned pieces were added back to stock.' : 'Returned pieces were written off (not restocked).'}
-                  {' '}Points earned on these pieces are taken off the leaderboard.
+                  {order.status === 'completed' && (
+                    <>
+                      {hasSplit
+                        ? 'Restocked pieces were added back to stock and damaged pieces moved to the damaged list.'
+                        : order.restocked ? 'Returned pieces were added back to stock.' : 'Returned pieces were written off (not restocked).'}
+                      {' '}Points earned on these pieces are off the leaderboard.
+                    </>
+                  )}
+                  {order.status === 'pending' && (
+                    <>
+                      Pending — the split below is proposed. Completing it reconfirms how many pieces are restocked
+                      and how many damaged, moves them, and takes their points off the leaderboard.
+                    </>
+                  )}
+                  {order.status === 'cancelled' && 'Cancelled — nothing changed on the leaderboard or in stock.'}
                 </p>
               </div>
             </div>
@@ -135,6 +151,13 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
                           {oi.item?.category ? `${oi.item.category} · ` : ''}
                           {formatMoney(price)} each
                         </p>
+                        {hasSplit && (
+                          <p className="mt-0.5 text-[11px] font-semibold">
+                            <span className="text-emerald-700">{oi.restockQuantity || 0} restock</span>
+                            <span className="text-slate-300"> · </span>
+                            <span className="text-rose-700">{oi.damagedQuantity || 0} damaged</span>
+                          </p>
+                        )}
                       </div>
                       <span className="shrink-0 rounded-md bg-slate-900/[0.06] px-2 py-0.5 text-[12px] font-bold tabular-nums text-slate-900">
                         × {oi.quantity}

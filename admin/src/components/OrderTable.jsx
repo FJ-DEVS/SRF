@@ -68,7 +68,7 @@ const OrderTable = ({ orders, onRowClick, renderActions }) => (
               </div>
             </td>
             <td className="whitespace-nowrap text-right">
-              <p className={`font-display text-[15px] font-bold tabular-nums ${order.type === 'return order' ? 'text-rose-600' : 'text-slate-900'}`}>
+              <p className={`font-display text-[15px] font-bold tabular-nums ${order.type !== 'return order' ? 'text-slate-900' : order.status === 'cancelled' ? 'text-slate-400 line-through' : 'text-rose-600'}`}>
                 {order.type === 'return order' ? '−' : ''}{formatMoney(orderTotal(order))}
               </p>
               <p className="text-[11px] font-medium tabular-nums text-slate-400">{orderQty(order)} pcs</p>

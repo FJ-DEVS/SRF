@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Search, X, ChevronLeft, ChevronRight, Undo2, PackageSearch } from 'lucide-react';
 import api from '../utils/api';
+import { RETURNABLE_STATUSES, loadReturnDraft, lineQty } from '../utils/returnDraft';
 import StatusBadge from './StatusBadge';
 import { formatMoney, formatDate, orderQty, itemsSummary } from '../utils/orderMath';
 
@@ -10,15 +11,16 @@ const MONTHS = [
 ];
 
 // Sell orders whose goods have left the shelf — the only ones a return can
-// come back from (mirrors RETURNABLE_STATUSES on the server)
-const RETURNABLE = 'rolled,billed,delivered';
+// come back from
+const RETURNABLE = RETURNABLE_STATUSES.join(',');
 const PAGE_SIZE = 8;
 
 // The body of the "return order" form, in two steps: find the sell order the
-// goods came back from, then say how many of each of its lines is coming back.
+// goods came back from, then say how many of each of its lines is coming back
+// — split into pieces fit to restock and pieces that are damaged.
 //   value     { order, lines } — order is the chosen sell order (null while
 //             searching); lines carry sold / returned / remaining per item and
-//             the quantity being returned now
+//             the restock / damaged pieces coming back now
 //   onChange  called with the next { order, lines }
 //   showAlert the page's alert dialog, for load failures
 const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
@@ -73,21 +75,7 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
   const pick = async (candidate) => {
     setPicking(true);
     try {
-      const res = await api.get(`/orders/${candidate._id}/returnable`);
-      const { order: source, items } = res.data.data;
-      onChange({
-        order: source,
-        lines: items.map((l) => ({
-          itemId: l.item?._id || l.item,
-          name: l.item?.name || 'Deleted item',
-          price: l.item?.price || 0,
-          category: l.item?.category || '',
-          ordered: l.ordered,
-          returned: l.returned,
-          remaining: l.remaining,
-          quantity: 0
-        }))
-      });
+      onChange(await loadReturnDraft(candidate._id));
     } catch (error) {
       showAlert?.('Error', error.response?.data?.message || 'Could not load that order', 'error');
     } finally {
@@ -95,12 +83,14 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
     }
   };
 
-  const setQty = (itemId, raw) => {
+  // field is 'restock' or 'damaged'; the two together never pass what is left
+  const setSplit = (itemId, field, raw) => {
+    const other = field === 'restock' ? 'damaged' : 'restock';
     onChange({
       order,
       lines: lines.map((l) =>
         l.itemId === itemId
-          ? { ...l, quantity: Math.max(0, Math.min(l.remaining, parseInt(raw, 10) || 0)) }
+          ? { ...l, [field]: Math.max(0, Math.min(l.remaining - l[other], parseInt(raw, 10) || 0)) }
           : l
       )
     });
@@ -109,8 +99,9 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
   /* ---------- Step 2: quantities coming back ---------- */
 
   if (order) {
-    const returningQty = lines.reduce((sum, l) => sum + l.quantity, 0);
-    const returningValue = lines.reduce((sum, l) => sum + l.quantity * l.price, 0);
+    const restockQty = lines.reduce((sum, l) => sum + l.restock, 0);
+    const damagedQty = lines.reduce((sum, l) => sum + l.damaged, 0);
+    const returningValue = lines.reduce((sum, l) => sum + lineQty(l) * l.price, 0);
     const nothingLeft = lines.every((l) => l.remaining === 0);
 
     return (
@@ -139,6 +130,7 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
         </div>
 
         <div className="overflow-hidden rounded-xl border border-slate-200">
+          <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full text-[13px]">
             <thead className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               <tr>
@@ -146,7 +138,8 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
                 <th className="px-2 py-2 text-right">Sold</th>
                 <th className="px-2 py-2 text-right">Returned</th>
                 <th className="px-2 py-2 text-right">Left</th>
-                <th className="px-3 py-2 text-right">Return now</th>
+                <th className="px-2 py-2 text-center text-emerald-600">Restock</th>
+                <th className="px-3 py-2 text-center text-rose-600">Damaged</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -159,39 +152,50 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
                     </p>
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums text-slate-700">{l.ordered}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-slate-500">{l.returned}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-slate-500">
+                    {l.returned}
+                    {l.pending > 0 && (
+                      <span className="block text-[10px] font-semibold text-amber-600" title="Held by a return that is still pending">
+                        +{l.pending} pending
+                      </span>
+                    )}
+                  </td>
                   <td className="px-2 py-2 text-right font-semibold tabular-nums text-slate-900">{l.remaining}</td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max={l.remaining - l.damaged}
+                      value={l.restock}
+                      disabled={l.remaining === 0}
+                      onChange={(e) => setSplit(l.itemId, 'restock', e.target.value)}
+                      className="mx-auto block w-16 !px-2 !py-1.5 text-center disabled:cursor-not-allowed disabled:bg-slate-50"
+                      aria-label={`Pieces of ${l.name} to restock`}
+                    />
+                  </td>
                   <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <input
-                        type="number"
-                        min="0"
-                        max={l.remaining}
-                        value={l.quantity}
-                        disabled={l.remaining === 0}
-                        onChange={(e) => setQty(l.itemId, e.target.value)}
-                        className="w-18 !px-2 !py-1.5 text-center disabled:cursor-not-allowed disabled:bg-slate-50"
-                        aria-label={`Quantity of ${l.name} to return`}
-                      />
-                      <button
-                        type="button"
-                        disabled={l.remaining === 0}
-                        onClick={() => setQty(l.itemId, l.remaining)}
-                        className="srf-chip disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Return everything left on this line"
-                      >
-                        All
-                      </button>
-                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      max={l.remaining - l.restock}
+                      value={l.damaged}
+                      disabled={l.remaining === 0}
+                      onChange={(e) => setSplit(l.itemId, 'damaged', e.target.value)}
+                      className="mx-auto block w-16 !px-2 !py-1.5 text-center disabled:cursor-not-allowed disabled:bg-slate-50"
+                      aria-label={`Damaged pieces of ${l.name}`}
+                    />
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
           <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-3.5 py-2.5">
             <p className="text-[13px] font-bold text-slate-900">
               Returning
-              <span className="ml-1.5 text-[11px] font-medium tabular-nums text-slate-400">{returningQty} pcs</span>
+              <span className="ml-1.5 text-[11px] font-medium tabular-nums text-slate-400">
+                {restockQty + damagedQty} pcs · {restockQty} restock · {damagedQty} damaged
+              </span>
             </p>
             <p className="font-display text-base font-bold tabular-nums text-rose-600">−{formatMoney(returningValue)}</p>
           </div>
@@ -199,7 +203,7 @@ const ReturnOrderPicker = ({ value, onChange, showAlert }) => {
 
         {nothingLeft && (
           <p className="rounded-lg border border-dashed border-slate-200 px-3 py-2.5 text-center text-xs text-slate-400">
-            Everything on this order has already been returned.
+            Everything on this order has already been returned or is held by a pending return.
           </p>
         )}
       </div>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
+import useCargoOptions from '../../utils/useCargoOptions';
 import RakAllocationModal from '../../components/RakAllocationModal';
 import AlertModal from '../../components/AlertModal';
 import ConfirmModal from '../../components/ConfirmModal';
@@ -93,8 +94,9 @@ const StatusChip = ({ status, className = '' }) => {
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${style.chip} ${className}`}>{style.label}</span>;
 };
 
-// The left pane: one row per customer, the one with the latest order on top
-const useCustomers = () => {
+// The left pane: one row per customer, the one with the latest order on top.
+// An optional cargo narrows the list, its counts and the stat cards.
+const useCustomers = (cargo) => {
   const [customers, setCustomers] = useState([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState(null);
@@ -108,7 +110,7 @@ const useCustomers = () => {
   const refresh = useCallback(async () => {
     const id = ++requestId.current;
     try {
-      const response = await api.get('/orders/roller/customers', { params: { search: searchTerm, limit } });
+      const response = await api.get('/orders/roller/customers', { params: { search: searchTerm, cargo, limit } });
       if (id === requestId.current && response.data.success) {
         setCustomers(response.data.data);
         setTotal(response.data.total);
@@ -119,10 +121,10 @@ const useCustomers = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, limit]);
+  }, [searchTerm, cargo, limit]);
 
   useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => { setLimit(CUSTOMER_STEP); }, [searchTerm]);
+  useEffect(() => { setLimit(CUSTOMER_STEP); }, [searchTerm, cargo]);
 
   return {
     customers, setCustomers, total, stats, loading, refresh, searchTerm, setSearchTerm,
@@ -133,14 +135,14 @@ const useCustomers = () => {
 
 // One customer's orders, oldest first like a chat. It opens on the newest
 // page and pages back in time as the roller scrolls up.
-const useChat = (customerId) => {
+const useChat = (customerId, cargo) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasOlder, setHasOlder] = useState(false);
 
   const fetchPage = (params) =>
-    api.get('/orders/roller/list', { params: { customer: customerId, sort: 'newest', page: 1, ...params } });
+    api.get('/orders/roller/list', { params: { customer: customerId, cargo, sort: 'newest', page: 1, ...params } });
 
   useEffect(() => {
     let cancelled = false;
@@ -158,7 +160,7 @@ const useChat = (customerId) => {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId]);
+  }, [customerId, cargo]);
 
   const loadOlder = async () => {
     if (loadingOlder || !hasOlder || orders.length === 0) return false;
@@ -256,7 +258,7 @@ const CustomerRow = ({ customer, selected, onSelect }) => {
   );
 };
 
-const CustomerList = ({ list, selectedId, onSelect }) => {
+const CustomerList = ({ list, selectedId, onSelect, cargo, onCargoChange, cargos }) => {
   const [showSearch, setShowSearch] = useState(false);
 
   return (
@@ -265,10 +267,20 @@ const CustomerList = ({ list, selectedId, onSelect }) => {
         <div className="flex items-center gap-2">
           <h2 className="font-display text-[17px] font-bold text-slate-900">Customers</h2>
           <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700">{list.total}</span>
+          <select
+            value={cargo}
+            onChange={(e) => onCargoChange(e.target.value)}
+            aria-label="Cargo"
+            title="Cargo"
+            className={`ml-auto h-9 w-36 min-w-0 !py-1 sm:!text-[13px] ${cargo ? '!border-slate-900 font-semibold' : ''}`}
+          >
+            <option value="">All cargos</option>
+            {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+          </select>
           <button
             type="button"
             onClick={() => setShowSearch((v) => !v)}
-            className={`ml-auto flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
+            className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${
               showSearch || list.searchTerm ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
             }`}
             aria-label="Search"
@@ -309,7 +321,7 @@ const CustomerList = ({ list, selectedId, onSelect }) => {
           icon={ClipboardCheck}
           iconClass="text-emerald-500"
           title="No orders"
-          text={list.searchTerm ? 'No customers match your search.' : 'New orders will show up here automatically.'}
+          text={list.searchTerm || cargo ? 'No customers match your search or cargo.' : 'New orders will show up here automatically.'}
         />
       ) : (
         <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
@@ -439,8 +451,8 @@ const OrderBubble = ({ order, onRoll, onRevert }) => {
 };
 
 // The right pane: one customer's orders as a chat, newest at the bottom
-const ChatPane = ({ customer, onBack }) => {
-  const chat = useChat(customer._id);
+const ChatPane = ({ customer, cargo, onBack }) => {
+  const chat = useChat(customer._id, cargo);
   const scrollRef = useRef(null);
   // What to do with the scroll once the next render lands: jump to the
   // bottom, or hold still while older orders are added above
@@ -609,7 +621,9 @@ const ChatPane = ({ customer, onBack }) => {
 // top, and the picked customer's orders as a chat on the right. On a phone
 // the list shows until a customer is picked, whose chat then takes the screen.
 const RollerOrders = () => {
-  const list = useCustomers();
+  const [cargo, setCargo] = useState('');
+  const cargos = useCargoOptions();
+  const list = useCustomers(cargo);
   const [selected, setSelected] = useState(null);
   // Read the picked customer from the list while it is there, so live counts show through
   const current = (selected && list.customers.find((c) => c._id === selected._id)) || selected;
@@ -623,8 +637,10 @@ const RollerOrders = () => {
   useEffect(() => {
     if (!currentId || currentUnseen === 0) return;
     setCustomers((customers) => customers.map((c) => (c._id === currentId ? { ...c, unseenCount: 0 } : c)));
-    api.put(`/orders/roller/customers/${currentId}/seen`).catch((error) => console.error('Error marking orders seen:', error));
-  }, [currentId, currentUnseen, setCustomers]);
+    // Only the orders the chat shows are marked — with a cargo picked, that cargo's
+    api.put(`/orders/roller/customers/${currentId}/seen`, null, { params: { cargo } })
+      .catch((error) => console.error('Error marking orders seen:', error));
+  }, [currentId, currentUnseen, setCustomers, cargo]);
 
   const pane = 'flex min-h-0 flex-col overflow-hidden rounded-2xl ring-1';
 
@@ -633,13 +649,20 @@ const RollerOrders = () => {
       <div className={`min-h-0 flex-col gap-2 sm:gap-3.5 ${current ? 'hidden' : 'flex'} lg:flex`}>
         <StatCards stats={list.stats} />
         <section className={`${pane} flex-1 bg-white ring-slate-200/80`}>
-          <CustomerList list={list} selectedId={current?._id} onSelect={setSelected} />
+          <CustomerList
+            list={list}
+            selectedId={current?._id}
+            onSelect={setSelected}
+            cargo={cargo}
+            onCargoChange={setCargo}
+            cargos={cargos}
+          />
         </section>
       </div>
 
       <section className={`${pane} bg-[#efeae2] ring-slate-200/80 ${current ? 'flex' : 'hidden'} lg:flex`}>
         {current ? (
-          <ChatPane key={current._id} customer={current} onBack={() => setSelected(null)} />
+          <ChatPane key={`${current._id}:${cargo}`} customer={current} cargo={cargo} onBack={() => setSelected(null)} />
         ) : (
           <EmptyPane icon={MessageSquare} iconClass="text-emerald-500" title="No customer selected" text="Pick a customer to see their orders." />
         )}

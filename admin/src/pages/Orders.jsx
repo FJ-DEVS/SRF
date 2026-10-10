@@ -11,11 +11,13 @@ import OrderDetailModal from '../components/OrderDetailModal';
 import OrderTable from '../components/OrderTable';
 import OrderCard from '../components/OrderCard';
 import ReturnOrderPicker from '../components/ReturnOrderPicker';
+import CompleteReturnModal from '../components/CompleteReturnModal';
+import { canReturn, loadReturnDraft, lineQty } from '../utils/returnDraft';
 import { TYPE_STYLES, typeStyle } from '../utils/orderType';
 import { orderTotal, orderQty } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Download, RefreshCw, RotateCcw, Share2,
-  ShoppingCart, CalendarDays
+  ShoppingCart, CalendarDays, CheckCircle2, XCircle, Check, Undo2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -65,6 +67,8 @@ const Orders = () => {
   const [alertConfig, setAlertConfig] = useState({ title: '', message: '', type: 'error' });
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [newStatus, setNewStatus] = useState('');
+  // { order, to: 'completed' | 'cancelled' } while a pending return is being settled
+  const [returnAction, setReturnAction] = useState(null);
   const [formData, setFormData] = useState({
     type: 'sell order',
     customerName: '',
@@ -73,9 +77,8 @@ const Orders = () => {
   });
   const [selectedItems, setSelectedItems] = useState([]);
   // Return orders: the sell order the goods came back from and how much of
-  // each of its lines is coming back; whether those pieces go back into stock
+  // each of its lines is coming back, split into restock and damaged pieces
   const [returnDraft, setReturnDraft] = useState({ order: null, lines: [] });
-  const [restock, setRestock] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
   const [showItemDropdown, setShowItemDropdown] = useState(false);
   const itemDropdownRef = useRef(null);
@@ -169,7 +172,7 @@ const Orders = () => {
         showAlert('Validation Error', 'Select the sell order the goods came back from', 'warning');
         return;
       }
-      const returning = returnDraft.lines.filter((l) => l.quantity > 0);
+      const returning = returnDraft.lines.filter((l) => lineQty(l) > 0);
       if (returning.length === 0) {
         showAlert('Validation Error', 'Enter how many pieces are coming back on at least one line', 'warning');
         return;
@@ -178,15 +181,19 @@ const Orders = () => {
         const response = await api.post('/orders', {
           type: 'return order',
           returnOf: returnDraft.order._id,
-          items: returning.map((l) => ({ item: l.itemId, quantity: l.quantity })),
+          items: returning.map((l) => ({
+            item: l.itemId,
+            quantity: lineQty(l),
+            restockQuantity: l.restock,
+            damagedQuantity: l.damaged
+          })),
           cargo: formData.cargo,
-          notes: formData.notes,
-          restock
+          notes: formData.notes
         });
         if (response.data.success) {
           fetchOrders();
           handleCloseModal();
-          showAlert('Return Recorded', 'The return order has been recorded. Points for the returned pieces are taken off the leaderboard.', 'success');
+          showAlert('Return Recorded', 'The return is pending. Complete it to reconfirm the restocked and damaged pieces — that moves them into stock and the damaged list and takes their points off the leaderboard. Cancel it if the goods do not come back.', 'success');
         }
       } catch (error) {
         showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
@@ -246,6 +253,52 @@ const Orders = () => {
       }
     } catch (error) {
       setShowStatusModal(false);
+      showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
+    }
+  };
+
+  // Straight from a sell order's row (or its detail view) into the return form,
+  // with that order already picked — only the quantities are left to enter
+  const openQuickReturn = async (order) => {
+    try {
+      const draft = await loadReturnDraft(order._id);
+      setShowDetailModal(false);
+      setSelectedOrder(null);
+      setFormData({ type: 'return order', customerName: '', cargo: '', notes: '' });
+      setSelectedItems([]);
+      setReturnDraft(draft);
+      setShowModal(true);
+    } catch (error) {
+      showAlert('Error', error.response?.data?.message || 'Could not load that order', 'error');
+    }
+  };
+
+  // Complete or cancel a pending return. Completing carries the reconfirmed
+  // restock / damaged split; it moves the pieces into stock and the damaged
+  // list and takes their points off the leaderboard.
+  const handleSettleReturn = async (split) => {
+    const { order, to } = returnAction || {};
+    if (!order) return;
+    try {
+      const payload = to === 'completed' ? { status: to, split } : { status: to };
+      const response = await api.put(`/orders/${order._id}/status`, payload);
+      if (response.data.success) {
+        fetchOrders();
+        setShowDetailModal(false);
+        setSelectedOrder(null);
+        if (to === 'completed') {
+          const restocked = split.reduce((sum, l) => sum + l.restockQuantity, 0);
+          const damaged = split.reduce((sum, l) => sum + l.damagedQuantity, 0);
+          showAlert(
+            'Return Completed',
+            `${restocked} piece${restocked === 1 ? '' : 's'} back in stock, ${damaged} on the damaged list, and their points are off the leaderboard.`,
+            'success'
+          );
+        } else {
+          showAlert('Return Cancelled', 'The return was cancelled. Nothing changed on the leaderboard or in stock.', 'success');
+        }
+      }
+    } catch (error) {
       showAlert('Error', error.response?.data?.message || 'An error occurred', 'error');
     }
   };
@@ -332,7 +385,6 @@ const Orders = () => {
     setFormData({ type: 'sell order', customerName: '', cargo: '', notes: '' });
     setSelectedItems([]);
     setReturnDraft({ order: null, lines: [] });
-    setRestock(false);
     setItemSearch('');
     setShowItemDropdown(false);
   };
@@ -380,7 +432,7 @@ const Orders = () => {
   };
 
   const getPrevStatus = (currentStatus, orderType) => {
-    if (orderType === 'return order') return null;
+    if (orderType === 'return order') return currentStatus === 'completed' ? 'pending' : null;
     if (orderType === 'purchase order') {
       return currentStatus === 'completed' ? 'pending' : null;
     }
@@ -443,6 +495,17 @@ const Orders = () => {
         <Share2 className="h-4 w-4" />
       </button>
 
+      {canReturn(order) && (
+        <button
+          onClick={() => openQuickReturn(order)}
+          className="srf-row-action text-rose-600 hover:bg-rose-50"
+          title="Return items from this order"
+          aria-label="Return items from this order"
+        >
+          <Undo2 className="h-4 w-4" />
+        </button>
+      )}
+
       {order.status === 'cancellation_requested' ? (
         <>
           <button
@@ -458,6 +521,25 @@ const Orders = () => {
             title="Reject Cancellation"
           >
             Reject
+          </button>
+        </>
+      ) : order.type === 'return order' && order.status === 'pending' ? (
+        <>
+          <button
+            onClick={() => setReturnAction({ order, to: 'completed' })}
+            className="srf-row-action border border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+            title="Complete return"
+            aria-label="Complete return"
+          >
+            <Check className="h-4 w-4" strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={() => setReturnAction({ order, to: 'cancelled' })}
+            className="srf-row-action border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+            title="Cancel return"
+            aria-label="Cancel return"
+          >
+            <X className="h-4 w-4" strokeWidth={2.5} />
           </button>
         </>
       ) : (
@@ -699,7 +781,6 @@ const Orders = () => {
                     onChange={(e) => {
                       setFormData({ ...formData, type: e.target.value, customerName: '' });
                       setReturnDraft({ order: null, lines: [] });
-                      setRestock(false);
                     }}
                     className="w-full disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
                   >
@@ -754,6 +835,13 @@ const Orders = () => {
                     {returnDraft.order ? 'Items coming back' : 'Which order are the goods coming back from?'}
                   </label>
                   <ReturnOrderPicker value={returnDraft} onChange={setReturnDraft} showAlert={showAlert} />
+                  {returnDraft.order && (
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      Restock the saleable pieces; damaged pieces go to the Damaged list under Items. The return
+                      starts as pending — stock, the damaged list and leaderboard points only change once you
+                      complete it and reconfirm these counts.
+                    </p>
+                  )}
                 </div>
               ) : (
               <div>
@@ -851,24 +939,6 @@ const Orders = () => {
                   )}
                 </div>
               </div>
-              )}
-
-              {isReturnForm && (
-                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                  <input
-                    type="checkbox"
-                    checked={restock}
-                    onChange={(e) => setRestock(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-semibold text-slate-900">Add the returned pieces back to stock</span>
-                    <span className="block text-[11px] text-slate-500">
-                      Tick for saleable pieces that came back. Leave off for damaged goods — they are written off.
-                      Points earned on the returned pieces come off the leaderboard either way.
-                    </span>
-                  </span>
-                </label>
               )}
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -976,7 +1046,7 @@ const Orders = () => {
         onClose={() => { setShowRevertModal(false); setSelectedOrder(null); }}
         onConfirm={handleRevertStatus}
         title="Revert Order Status"
-        message={`Revert "${selectedOrder?.status}" back to "${getPrevStatus(selectedOrder?.status, selectedOrder?.type)}"?${selectedOrder?.type === 'purchase order' && selectedOrder?.status === 'completed' ? ' Stock added on completion will be deducted.' : ''}${selectedOrder?.type === 'sell order' && selectedOrder?.status === 'rolled' ? ' The stock goes back onto the raks it came off.' : ''}`}
+        message={`Revert "${selectedOrder?.status}" back to "${getPrevStatus(selectedOrder?.status, selectedOrder?.type)}"?${selectedOrder?.type === 'purchase order' && selectedOrder?.status === 'completed' ? ' Stock added on completion will be deducted.' : ''}${selectedOrder?.type === 'sell order' && selectedOrder?.status === 'rolled' ? ' The stock goes back onto the raks it came off.' : ''}${selectedOrder?.type === 'return order' ? ' Points for the returned pieces go back on the leaderboard, restocked pieces come back out of stock and damaged pieces off the damaged list.' : ''}`}
         type="warning"
         confirmLabel="Revert"
       />
@@ -986,18 +1056,67 @@ const Orders = () => {
         isOpen={showDetailModal}
         onClose={() => setShowDetailModal(false)}
         order={selectedOrder}
-        actions={selectedOrder && selectedOrder.type !== 'return order' && (
-          <button
-            onClick={() => {
-              setShowDetailModal(false);
-              handleEdit(selectedOrder);
-            }}
-            className="srf-btn srf-btn-primary"
-          >
-            <Edit2 className="h-3.5 w-3.5" />
-            Edit Order
-          </button>
-        )}
+        actions={selectedOrder && (selectedOrder.type === 'return order' ? (
+          selectedOrder.status === 'pending' && (
+            <>
+              <button
+                onClick={() => setReturnAction({ order: selectedOrder, to: 'cancelled' })}
+                className="srf-btn border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Cancel Return
+              </button>
+              <button
+                onClick={() => setReturnAction({ order: selectedOrder, to: 'completed' })}
+                className="srf-btn srf-btn-success"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Complete Return
+              </button>
+            </>
+          )
+        ) : (
+          <>
+            {canReturn(selectedOrder) && (
+              <button
+                onClick={() => openQuickReturn(selectedOrder)}
+                className="srf-btn border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                Return Items
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setShowDetailModal(false);
+                handleEdit(selectedOrder);
+              }}
+              className="srf-btn srf-btn-primary"
+            >
+              <Edit2 className="h-3.5 w-3.5" />
+              Edit Order
+            </button>
+          </>
+        ))}
+      />
+
+      {/* Settle a pending return — completing it reconfirms the restock / damaged split */}
+      {returnAction?.to === 'completed' && (
+        <CompleteReturnModal
+          order={returnAction.order}
+          onClose={() => setReturnAction(null)}
+          onConfirm={handleSettleReturn}
+        />
+      )}
+      <ConfirmModal
+        isOpen={returnAction?.to === 'cancelled'}
+        onClose={() => setReturnAction(null)}
+        onConfirm={handleSettleReturn}
+        title="Cancel Return"
+        message={`Cancel ${returnAction?.order.customerName?.name || 'this'}'s return? Nothing changes on the leaderboard or in stock, and the pieces can be returned again later.`}
+        type="warning"
+        confirmLabel="Cancel Return"
+        cancelLabel="Keep Pending"
       />
 
       {/* Share Order Modal */}
