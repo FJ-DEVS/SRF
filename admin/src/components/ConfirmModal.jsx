@@ -19,7 +19,7 @@ const TYPES = {
   }
 };
 
-const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, type = 'danger', confirmLabel = 'Confirm' }) => {
+const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, type = 'danger', confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) => {
   if (!isOpen) return null;
 
   const cfg = TYPES[type] || TYPES.danger;
@@ -38,7 +38,7 @@ const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message, type = 'dang
 
         <div className="grid grid-cols-2 gap-2.5 border-t border-slate-100 bg-slate-50/60 px-5 py-3.5">
           <button onClick={onClose} className="srf-btn srf-btn-secondary w-full">
-            Cancel
+            {cancelLabel}
           </button>
           <button
             onClick={() => {

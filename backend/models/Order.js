@@ -41,8 +41,9 @@ const orderSchema = new mongoose.Schema({
     default: null,
     index: true
   },
-  // Return orders only: whether the returned pieces were put back into item
-  // stock when the return was recorded (damaged goods usually are not).
+  // Return orders only: whether any returned pieces go back into item stock.
+  // Kept in step with the per-line split below; returns recorded before that
+  // split existed rely on it alone (all pieces restocked, or all written off).
   restocked: {
     type: Boolean,
     default: false
@@ -57,6 +58,17 @@ const orderSchema = new mongoose.Schema({
       type: Number,
       required: [true, 'Item quantity is required'],
       min: [1, 'Quantity must be at least 1']
+    },
+    // Return orders only: how many of the line's pieces go back into stock and
+    // how many onto the damaged list. Proposed when the return is recorded,
+    // reconfirmed when it is completed; the two always add up to quantity.
+    restockQuantity: {
+      type: Number,
+      min: [0, 'Restocked quantity cannot be negative']
+    },
+    damagedQuantity: {
+      type: Number,
+      min: [0, 'Damaged quantity cannot be negative']
     }
   }],
   customerName: {

@@ -11,6 +11,7 @@ import PageHeader from '../../components/PageHeader';
 import OrderTable from '../../components/OrderTable';
 import OrderCard from '../../components/OrderCard';
 import { typeStyle } from '../../utils/orderType';
+import useCargoOptions from '../../utils/useCargoOptions';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import {
   Search, X, Eye, RefreshCw, CalendarDays, ShoppingCart,
@@ -49,6 +50,8 @@ const STATUS_TABS = [
 // The only things an accounts manager may do to an order. Anything else is
 // view-only here (and refused by the server).
 const moveFor = (order) => {
+  // Returns are completed or cancelled by the admin — view-only here
+  if (order.type === 'return order') return null;
   if (order.status === 'cancellation_requested') {
     return {
       kind: 'approve',
@@ -113,6 +116,8 @@ const AccountsOrders = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [cargoFilter, setCargoFilter] = useState('');
+  const cargos = useCargoOptions();
   const [monthFilter, setMonthFilter] = useState('');
   const [yearFilter, setYearFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest');
@@ -135,6 +140,7 @@ const AccountsOrders = () => {
           search: searchTerm,
           status: statusFilter,
           type: typeFilter,
+          cargo: cargoFilter,
           month: monthFilter,
           year: yearFilter,
           sort: sortBy,
@@ -152,7 +158,7 @@ const AccountsOrders = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter, typeFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
 
   const fetchCounts = useCallback(async () => {
     try {
@@ -173,7 +179,7 @@ const AccountsOrders = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, typeFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
 
   // Rollers and salesmen move orders all day — keep the list and tabs live
   useEffect(() => {
@@ -248,12 +254,13 @@ const AccountsOrders = () => {
     </>
   );
 
-  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter || monthFilter || yearFilter || todayOnly);
+  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter || cargoFilter || monthFilter || yearFilter || todayOnly);
 
   const clearFilters = () => {
     setSearchTerm('');
     setStatusFilter('');
     setTypeFilter('');
+    setCargoFilter('');
     setMonthFilter('');
     setYearFilter('');
     setTodayOnly(false);
@@ -316,12 +323,17 @@ const AccountsOrders = () => {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:ml-auto lg:flex">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5 lg:ml-auto lg:flex">
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
               <option value="">All types</option>
               <option value="sell order">Sell Order</option>
               <option value="purchase order">Purchase Order</option>
               <option value="return order">Return Order</option>
+            </select>
+
+            <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
+              <option value="">All cargos</option>
+              {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
             </select>
 
             <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>
@@ -338,7 +350,7 @@ const AccountsOrders = () => {
               ))}
             </select>
 
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="col-span-2 sm:col-span-1">
               {SORT_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}

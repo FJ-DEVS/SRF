@@ -223,3 +223,16 @@
     display: none;
   }
 }
+
+/* html2canvas (order share image) measures text baselines with a 1×1 probe
+   image it appends to the live page. Tailwind's preflight makes every img
+   display:block, which drops that probe onto its own line, so every text run
+   in the captured image was drawn too low — off-centre pills and item rows
+   that no longer matched the on-screen card. Keep only that probe inline.
+   The 1px bottom margin cancels the extra pixel html2canvas adds to the
+   baseline it reads off the probe, so captured text lands exactly where the
+   browser draws it. */
+img[src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"] {
+  display: inline;
+  margin-bottom: 1px !important;
+}

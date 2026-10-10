@@ -48,7 +48,8 @@ function setup({ returns = [] } = {}) {
       countDocuments: async () => 1,
       findById: async (id) => id === scheme._id ? scheme : null
     },
-    '../models/Order': { find: (filter) => query(filter.type === 'return order' ? returns : [
+    '../models/Order': { find: (filter) => query(filter.type === 'return order'
+      ? returns.filter((r) => !filter.status || r.status === filter.status) : [
       { _id: 'o1', customerName: 'c1', items: [{ item: 'item', quantity: 143 }], createdByType: 'salesman', createdBy: 'rahul' },
       { _id: 'o2', customerName: 'c2', items: [{ item: 'item', quantity: 128 }], createdByType: 'salesman', createdBy: 'faiz' },
       { _id: 'o3', customerName: 'c3', items: [{ item: 'item', quantity: 80 }], createdByType: 'admin' }
@@ -148,11 +149,14 @@ test('salesman remains unable to edit schemes and missing schemes return 404', a
   assert.equal((await request('/salesman/:id/leaderboard', { id: 'missing' })).statusCode, 404);
 });
 
-test('return orders take back only the points of the returned lines, charged to the source order\'s schema', async () => {
+test('completed return orders take back only the points of the returned lines, charged to the source order\'s schema', async () => {
   const { request } = setup({ returns: [
-    { returnOf: 'o1', items: [{ item: 'item', quantity: 50 }] },
-    { returnOf: 'o1', items: [{ item: 'other-item', quantity: 5 }] },
-    { returnOf: 'o3', items: [{ item: 'item', quantity: 80 }] }
+    { returnOf: 'o1', status: 'completed', items: [{ item: 'item', quantity: 50 }] },
+    { returnOf: 'o1', status: 'completed', items: [{ item: 'other-item', quantity: 5 }] },
+    { returnOf: 'o3', status: 'completed', items: [{ item: 'item', quantity: 80 }] },
+    // Pending and cancelled returns leave the standings alone
+    { returnOf: 'o2', status: 'pending', items: [{ item: 'item', quantity: 100 }] },
+    { returnOf: 'o2', status: 'cancelled', items: [{ item: 'item', quantity: 100 }] }
   ] });
   const result = await request('/:id/leaderboard', { token: 'admin' });
   const rows = result.body.data.leaderboard;

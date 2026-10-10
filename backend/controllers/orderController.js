@@ -4,6 +4,7 @@ const Customer = require('../models/Customer');
 const Vendor = require('../models/Vendor');
 const Salesman = require('../models/Salesman');
 const Item = require('../models/Item');
+const DamagedItem = require('../models/DamagedItem');
 const Cargo = require('../models/Cargo');
 const Category = require('../models/Category');
 const axios = require('axios');
@@ -81,8 +82,9 @@ const sendWhatsAppMessage = async (phone, customerName) => {
 const RETURNABLE_STATUSES = ['rolled', 'billed', 'delivered'];
 
 // What is left to return on one sell order: per item, what was sold, what has
-// already come back on earlier return orders, and the difference. Resolves to
-// { error, status } when the order cannot take a return at all.
+// come back on completed returns, what is held by returns still pending, and
+// what is left. Cancelled returns hold nothing. Resolves to { error, status }
+// when the order cannot take a return at all.
 const returnableLinesFor = async (orderId, session = null) => {
   if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
     return { error: 'Select the sell order the goods came back from', status: 400 };
@@ -102,14 +104,20 @@ const returnableLinesFor = async (orderId, session = null) => {
     };
   }
 
-  const earlier = await Order.find({ type: 'return order', returnOf: original._id })
-    .select('items')
+  const earlier = await Order.find({
+    type: 'return order',
+    returnOf: original._id,
+    status: { $ne: 'cancelled' }
+  })
+    .select('items status')
     .session(session);
   const returnedByItem = new Map();
+  const pendingByItem = new Map();
   for (const ret of earlier) {
+    const tally = ret.status === 'completed' ? returnedByItem : pendingByItem;
     for (const line of ret.items) {
       const key = String(line.item);
-      returnedByItem.set(key, (returnedByItem.get(key) || 0) + (line.quantity || 0));
+      tally.set(key, (tally.get(key) || 0) + (line.quantity || 0));
     }
   }
 
@@ -117,13 +125,44 @@ const returnableLinesFor = async (orderId, session = null) => {
   const byItem = new Map();
   for (const line of original.items) {
     const key = String(line.item?._id || line.item);
-    if (!byItem.has(key)) byItem.set(key, { item: line.item, ordered: 0, returned: returnedByItem.get(key) || 0 });
+    if (!byItem.has(key)) {
+      byItem.set(key, {
+        item: line.item,
+        ordered: 0,
+        returned: returnedByItem.get(key) || 0,
+        pending: pendingByItem.get(key) || 0
+      });
+    }
     byItem.get(key).ordered += line.quantity || 0;
   }
-  const lines = [...byItem.values()].map((l) => ({ ...l, remaining: Math.max(l.ordered - l.returned, 0) }));
+  const lines = [...byItem.values()].map((l) => ({
+    ...l,
+    remaining: Math.max(l.ordered - l.returned - l.pending, 0)
+  }));
 
   return { original, lines };
 };
+
+// A return line's split between stock and the damaged list: whole pieces, none
+// negative, adding up to exactly what came back. Resolves to an error message,
+// or null when the split is good.
+const returnSplitError = (restock, damaged, quantity, name) => {
+  if (![restock, damaged].every((n) => Number.isInteger(n) && n >= 0)) {
+    return `Enter the restocked and damaged pieces of "${name}" as whole numbers of 0 or more`;
+  }
+  if (restock + damaged !== quantity) {
+    return `"${name}": ${restock} restocked + ${damaged} damaged = ${restock + damaged}, but ${quantity} came back`;
+  }
+  return null;
+};
+
+// The split a completed return applied to one line. Returns recorded before
+// the split existed restocked every piece or none, and their unrestocked
+// pieces were written off rather than put on the damaged list.
+const returnSplitOf = (order, line) =>
+  line.restockQuantity != null || line.damagedQuantity != null
+    ? { restock: line.restockQuantity || 0, damaged: line.damagedQuantity || 0 }
+    : { restock: order.restocked ? line.quantity : 0, damaged: 0 };
 
 // Create order — admin (any type); salesman (sell orders only)
 exports.createOrder = async (req, res) => {
@@ -182,12 +221,15 @@ exports.createOrder = async (req, res) => {
     }
 
     // Return orders: goods coming back from a sell order. Every line is capped
-    // at what that order sold less what earlier returns already took back, the
-    // customer is copied from it, and the return is complete the moment it is
-    // recorded — there is no roll / bill / deliver chain to walk.
+    // at what that order sold less what earlier (non-cancelled) returns hold,
+    // and the customer is copied from it. Each line also says how many of its
+    // pieces go back into stock and how many are damaged. The return starts
+    // out pending; only completing it moves the pieces and takes the points
+    // back (see updateOrderStatus).
     let returnOf = null;
     let returnCustomer = null;
     let restocked = false;
+    let orderItems = items;
     if (type === 'return order') {
       const check = await returnableLinesFor(req.body.returnOf, session);
       if (check.error) {
@@ -223,14 +265,24 @@ exports.createOrder = async (req, res) => {
       returnOf = check.original._id;
       returnCustomer = check.original.customerName?._id || check.original.customerName || null;
 
-      // Pieces that came back in saleable condition go straight back into
-      // stock; damaged ones are simply written off, so this is the caller's call
-      restocked = Boolean(req.body.restock);
-      if (restocked) {
-        for (const line of items) {
-          await Item.findByIdAndUpdate(line.item, { $inc: { quantity: line.quantity } }, { session });
+      // Saleable pieces go back into stock, damaged ones onto the damaged list.
+      // A line sent without a split falls back to the order-wide `restock`
+      // flag: every piece restocked, or every piece damaged.
+      orderItems = [];
+      for (const line of items) {
+        const noSplit = line.restockQuantity === undefined && line.damagedQuantity === undefined;
+        const restock = noSplit ? (req.body.restock ? line.quantity : 0) : line.restockQuantity;
+        const damaged = noSplit ? line.quantity - restock : line.damagedQuantity;
+        const name = openByItem.get(String(line.item)).item?.name || 'this item';
+        const splitError = returnSplitError(restock, damaged, line.quantity, name);
+        if (splitError) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ success: false, message: splitError });
         }
+        orderItems.push({ item: line.item, quantity: line.quantity, restockQuantity: restock, damagedQuantity: damaged });
       }
+      restocked = orderItems.some((l) => l.restockQuantity > 0);
     }
 
     // Sell orders reference a Customer, purchase orders reference a Vendor
@@ -325,14 +377,14 @@ exports.createOrder = async (req, res) => {
     // Create the order (stock already updated atomically above)
     const order = new Order({
       type,
-      items,
+      items: orderItems,
       customerName: type === 'return order' ? returnCustomer : customerName,
       customerModel,
       cargo: cargo || null,
       notes: notes || null,
       createdBy: req.user.role === 'salesman' ? req.user.id : 'Admin',
       createdByType: req.user.role === 'admin' ? 'admin' : 'salesman',
-      status: type === 'return order' ? 'completed' : 'pending',
+      status: 'pending',
       returnOf,
       restocked
     });
@@ -368,7 +420,6 @@ exports.createOrder = async (req, res) => {
     );
 
     getIO().emit('orders_updated');
-    if (restocked) getIO().emit('items_updated');
 
     res.status(201).json({
       success: true,
@@ -414,11 +465,16 @@ const crmStatusMatch = (status) =>
 // that order as the preview and how many of their "to roll" orders are unseen
 exports.getRollerCustomers = async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, cargo } = req.query;
     const limitNum = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 200);
 
+    // An optional cargo narrows everything — the list, its counts and the cards
+    const scope = cargo && mongoose.Types.ObjectId.isValid(cargo)
+      ? { ...rollerVisibleQuery, cargo: new mongoose.Types.ObjectId(cargo) }
+      : rollerVisibleQuery;
+
     const pipeline = [
-      { $match: rollerVisibleQuery },
+      { $match: scope },
       { $sort: { createdAt: -1 } },
       {
         $group: {
@@ -463,7 +519,7 @@ exports.getRollerCustomers = async (req, res) => {
     // Counts for the cards above the chat — across every customer, not just the search
     const [[result], statusCounts] = await Promise.all([
       Order.aggregate(pipeline),
-      Order.aggregate([{ $match: rollerVisibleQuery }, { $group: { _id: '$status', count: { $sum: 1 } } }])
+      Order.aggregate([{ $match: scope }, { $group: { _id: '$status', count: { $sum: 1 } } }])
     ]);
     const countOf = (status) => statusCounts.find((c) => c._id === status)?.count || 0;
     const stats = {
@@ -480,14 +536,17 @@ exports.getRollerCustomers = async (req, res) => {
 
 // A roller opened a customer's chat — every unseen "to roll" order of theirs
 // is now seen, for every roller. updatedAt is left alone since nothing about
-// the orders themselves changed.
+// the orders themselves changed. With ?cargo= only that cargo's orders — the
+// ones the chat actually showed — are marked.
 exports.markRollerCustomerSeen = async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.customerId)) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
+    const filter = { customerName: req.params.customerId, status: { $in: ROLLER_STATUSES }, rollerSeenAt: null };
+    if (req.query.cargo && mongoose.Types.ObjectId.isValid(req.query.cargo)) filter.cargo = req.query.cargo;
     const result = await Order.updateMany(
-      { customerName: req.params.customerId, status: { $in: ROLLER_STATUSES }, rollerSeenAt: null },
+      filter,
       { $set: { rollerSeenAt: new Date() } },
       { timestamps: false }
     );
@@ -899,7 +958,7 @@ exports.updateOrderStatus = async (req, res) => {
     const validTransitions = order.type === 'purchase order'
       ? { 'pending': ['completed'] }
       : order.type === 'return order'
-      ? {} // a return is complete the moment it is recorded — nothing moves it
+      ? { 'pending': ['completed', 'cancelled'] }
       : {
           'pending': ['to roll'],
           'to roll': ['rolled'],
@@ -953,6 +1012,15 @@ exports.updateOrderStatus = async (req, res) => {
       }
     }
 
+    // Completing or cancelling a return is the admin's call — it moves stock
+    // and leaderboard points
+    if (order.type === 'return order' && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only an admin can complete or cancel a return order'
+      });
+    }
+
     // Check valid transition
     if (!validTransitions[order.status] || !validTransitions[order.status].includes(status)) {
       return res.status(400).json({ 
@@ -969,6 +1037,38 @@ exports.updateOrderStatus = async (req, res) => {
         success: false,
         message: 'A bill number (digits only) is required to mark an order as billed'
       });
+    }
+
+    // Completing a return is where its pieces are counted for good: the admin
+    // reconfirms, line by line, how many go back into stock and how many are
+    // damaged, and every line has to add up to what came back.
+    let returnSplit = null;
+    if (order.type === 'return order' && status === 'completed') {
+      const sent = Array.isArray(req.body.split) ? req.body.split : [];
+      const byItem = new Map(sent.map((s) => [String(s?.item), s]));
+      if (sent.length !== order.items.length || byItem.size !== order.items.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'Confirm how many pieces of every returned item go back to stock and how many are damaged'
+        });
+      }
+      const names = new Map(
+        (await Item.find({ _id: { $in: order.items.map((l) => l.item) } }).select('name'))
+          .map((i) => [String(i._id), i.name])
+      );
+      returnSplit = new Map();
+      for (const line of order.items) {
+        const key = String(line.item);
+        const entry = byItem.get(key);
+        if (!entry) {
+          return res.status(400).json({ success: false, message: 'The confirmed split lists an item that is not on this return' });
+        }
+        const splitError = returnSplitError(
+          entry.restockQuantity, entry.damagedQuantity, line.quantity, names.get(key) || 'Deleted item'
+        );
+        if (splitError) return res.status(400).json({ success: false, message: splitError });
+        returnSplit.set(key, { restock: entry.restockQuantity, damaged: entry.damagedQuantity });
+      }
     }
 
     const previousStatus = order.status;
@@ -988,6 +1088,7 @@ exports.updateOrderStatus = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
     let raksChanged = false;
+    let itemsChanged = false;
     try {
       // Re-read under the transaction. Two people advancing the same order at
       // once (or a double-tapped button) both passed the checks above against
@@ -1029,6 +1130,28 @@ exports.updateOrderStatus = async (req, res) => {
         raksChanged = true;
       }
 
+      // A completed return records the split it was confirmed with, then puts
+      // the saleable pieces back into stock and the rest on the damaged list
+      if (returnSplit) {
+        for (const line of fresh.items) {
+          const { restock, damaged } = returnSplit.get(String(line.item));
+          line.restockQuantity = restock;
+          line.damagedQuantity = damaged;
+          if (restock > 0) {
+            await Item.findByIdAndUpdate(line.item, { $inc: { quantity: restock } }, { session });
+          }
+          if (damaged > 0) {
+            await DamagedItem.findOneAndUpdate(
+              { item: line.item },
+              { $inc: { quantity: damaged } },
+              { upsert: true, setDefaultsOnInsert: true, session }
+            );
+          }
+        }
+        fresh.restocked = fresh.items.some((l) => l.restockQuantity > 0);
+        itemsChanged = true;
+      }
+
       await fresh.save({ session });
 
       // If purchase order is completed, add items to inventory
@@ -1047,6 +1170,14 @@ exports.updateOrderStatus = async (req, res) => {
       order.placementsConsumed = fresh.placementsConsumed;
       order.rakConsumption = fresh.rakConsumption;
       order.rolledBy = fresh.rolledBy;
+      if (returnSplit) {
+        for (const line of order.items) {
+          const { restock, damaged } = returnSplit.get(String(line.item));
+          line.restockQuantity = restock;
+          line.damagedQuantity = damaged;
+        }
+        order.restocked = fresh.restocked;
+      }
 
       await session.commitTransaction();
     } catch (error) {
@@ -1078,6 +1209,7 @@ exports.updateOrderStatus = async (req, res) => {
     await order.populate(populateOptions);
 
     getIO().emit('orders_updated');
+    if (itemsChanged) getIO().emit('items_updated');
     if (raksChanged) {
       // The roller's rak screens are now showing stale occupancy
       getIO().emit('placements_updated');
@@ -1298,6 +1430,12 @@ exports.revertOrderStatus = async (req, res) => {
       },
       'purchase order': {
         'completed': 'pending'
+      },
+      // Re-opens a completed return: its points go back on the leaderboard,
+      // restocked pieces come back out of stock and damaged pieces off the
+      // damaged list
+      'return order': {
+        'completed': 'pending'
       }
     };
 
@@ -1321,7 +1459,7 @@ exports.revertOrderStatus = async (req, res) => {
       });
     }
 
-    // If reverting a completed purchase order, deduct stock that was added
+    // If reverting a completed purchase order, deduct the stock that was added
     if (order.type === 'purchase order' && order.status === 'completed') {
       for (const orderItem of order.items) {
         await Item.findByIdAndUpdate(
@@ -1330,6 +1468,36 @@ exports.revertOrderStatus = async (req, res) => {
           { session }
         );
       }
+    }
+
+    // Reverting a completed return takes back exactly what completing it put
+    // in: restocked pieces out of stock, damaged pieces off the damaged list.
+    // The split stays on the lines, ready to be reconfirmed. Damaged pieces
+    // already restored since cannot be taken back, so the revert is refused.
+    let itemsChanged = false;
+    if (order.type === 'return order' && order.status === 'completed') {
+      for (const line of order.items) {
+        const { restock, damaged } = returnSplitOf(order, line);
+        if (restock > 0) {
+          await Item.findByIdAndUpdate(line.item, { $inc: { quantity: -restock } }, { session });
+        }
+        if (damaged > 0) {
+          const taken = await DamagedItem.findOneAndUpdate(
+            { item: line.item, quantity: { $gte: damaged } },
+            { $inc: { quantity: -damaged } },
+            { session }
+          );
+          if (!taken) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({
+              success: false,
+              message: 'Some damaged pieces from this return are no longer on the damaged list (restored to stock since), so it cannot be reverted'
+            });
+          }
+        }
+      }
+      itemsChanged = true;
     }
 
     // Undoing "rolled" puts the material back on the very raks it came off, so
@@ -1356,6 +1524,7 @@ exports.revertOrderStatus = async (req, res) => {
     session.endSession();
 
     getIO().emit('orders_updated');
+    if (itemsChanged) getIO().emit('items_updated');
     if (raksChanged) {
       getIO().emit('placements_updated');
       getIO().emit('raks_updated');
