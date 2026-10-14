@@ -12,6 +12,7 @@ const { getIO } = require('../socket');
 const Placement = require('../models/Placement');
 const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
+const { itemNameKeyStages, ITEM_NAME_SORTS } = require('../utils/itemNameSort');
 
 // Helper function to send OneSignal notification
 const sendPushNotification = async (message, data = {}) => {
@@ -461,6 +462,13 @@ const CRM_VISIBLE_STATUSES = ['billed', 'delivered'];
 const crmStatusMatch = (status) =>
   CRM_VISIBLE_STATUSES.includes(status) ? status : { $in: CRM_VISIBLE_STATUSES };
 
+// "Item A–Z" sorts go by an order's first item, the one listed on top
+const ITEM_SORT_STAGES = [
+  { $addFields: { _firstItem: { $arrayElemAt: ['$items.item', 0] } } },
+  { $lookup: { from: 'items', localField: '_firstItem', foreignField: '_id', as: '_item' } },
+  ...itemNameKeyStages({ $first: '$_item.name' })
+];
+
 // The roller's chat list: one row per customer, most recent order first, with
 // that order as the preview and how many of their "to roll" orders are unseen
 exports.getRollerCustomers = async (req, res) => {
@@ -642,10 +650,13 @@ exports.getAllOrders = async (req, res) => {
       // Bill numbers are stored as strings, so they are compared as numbers
       // (otherwise "100" sorts before "20"); orders with no bill go last
       bill_desc: { hasBill: -1, billNo: -1, createdAt: -1 },
-      bill_asc: { hasBill: -1, billNo: 1, createdAt: -1 }
+      bill_asc: { hasBill: -1, billNo: 1, createdAt: -1 },
+      item_asc: { ...ITEM_NAME_SORTS.item_asc, createdAt: -1 },
+      item_noserial_asc: { ...ITEM_NAME_SORTS.item_noserial_asc, createdAt: -1 }
     };
     const sortSpec = sortSpecs[sort] || sortSpecs.newest;
-    const needsComputedSort = ['name_asc', 'name_desc', 'qty_desc', 'qty_asc', 'bill_desc', 'bill_asc'].includes(sort);
+    const itemSort = Boolean(ITEM_NAME_SORTS[sort]);
+    const needsComputedSort = itemSort || ['name_asc', 'name_desc', 'qty_desc', 'qty_asc', 'bill_desc', 'bill_asc'].includes(sort);
 
     let orders;
     let total;
@@ -676,6 +687,7 @@ exports.getAllOrders = async (req, res) => {
             }
           }
         },
+        ...(itemSort ? ITEM_SORT_STAGES : []),
         { $sort: sortSpec },
         {
           $facet: {
@@ -1104,7 +1116,10 @@ exports.updateOrderStatus = async (req, res) => {
       }
 
       fresh.status = status;
-      if (status === 'billed') fresh.billNumber = bill;
+      if (status === 'billed') {
+        fresh.billNumber = bill;
+        fresh.billedAt = new Date();
+      }
       // A (re)queued order is new to the rollers again
       if (status === 'to roll') fresh.rollerSeenAt = null;
       if (status === 'rolled') fresh.rolledBy = req.user.role === 'roller' ? req.user.id : null;
@@ -1167,6 +1182,7 @@ exports.updateOrderStatus = async (req, res) => {
 
       order.status = fresh.status;
       order.billNumber = fresh.billNumber;
+      order.billedAt = fresh.billedAt;
       order.placementsConsumed = fresh.placementsConsumed;
       order.rakConsumption = fresh.rakConsumption;
       order.rolledBy = fresh.rolledBy;
@@ -1515,7 +1531,10 @@ exports.revertOrderStatus = async (req, res) => {
 
     // Undoing "billed" voids the bill number typed in for it; the next billing
     // pass asks for one afresh.
-    if (order.status === 'billed') order.billNumber = null;
+    if (order.status === 'billed') {
+      order.billNumber = null;
+      order.billedAt = null;
+    }
 
     order.status = prevStatus;
     await order.save({ session });

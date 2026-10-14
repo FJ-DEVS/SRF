@@ -12,6 +12,7 @@ import OrderTable from '../../components/OrderTable';
 import OrderCard from '../../components/OrderCard';
 import { typeStyle } from '../../utils/orderType';
 import useCargoOptions from '../../utils/useCargoOptions';
+import { ITEM_NAME_SORT_OPTIONS } from '../../utils/sortOptions';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import {
   Search, X, Eye, RefreshCw, CalendarDays, ShoppingCart,
@@ -30,6 +31,7 @@ const SORT_OPTIONS = [
   { value: 'oldest', label: 'Oldest first' },
   { value: 'name_asc', label: 'Customer A–Z' },
   { value: 'name_desc', label: 'Customer Z–A' },
+  ...ITEM_NAME_SORT_OPTIONS,
   { value: 'qty_desc', label: 'Quantity: high to low' },
   { value: 'qty_asc', label: 'Quantity: low to high' }
 ];

@@ -8,8 +8,16 @@ export const NAME_SORT_OPTIONS = [
   { value: 'name_desc', label: 'Name Z–A' }
 ];
 
+// Item-name sorts for order and item lists — values match
+// backend/utils/itemNameSort.js
+export const ITEM_NAME_SORT_OPTIONS = [
+  { value: 'item_asc', label: 'Item A–Z (with serial no.)' },
+  { value: 'item_noserial_asc', label: 'Item A–Z (without serial no.)' }
+];
+
 export const ITEM_SORT_OPTIONS = [
   ...NAME_SORT_OPTIONS,
+  ...ITEM_NAME_SORT_OPTIONS,
   { value: 'price_asc', label: 'Price: low to high' },
   { value: 'price_desc', label: 'Price: high to low' },
   { value: 'qty_asc', label: 'Stock: low to high' },
@@ -24,7 +32,8 @@ export const DEFAULT_SORT = 'newest';
 export const PLACEMENT_SORT_OPTIONS = [
   { value: 'rak_asc', label: 'Rak A–Z' },
   { value: 'rak_desc', label: 'Rak Z–A' },
-  { value: 'item_asc', label: 'Item A–Z' },
+  { value: 'item_asc', label: 'Item A–Z (with serial no.)' },
+  { value: 'item_noserial_asc', label: 'Item A–Z (without serial no.)' },
   { value: 'item_desc', label: 'Item Z–A' },
   { value: 'qty_desc', label: 'Qty: high to low' },
   { value: 'qty_asc', label: 'Qty: low to high' },

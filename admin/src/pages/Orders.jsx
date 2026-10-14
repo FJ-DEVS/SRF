@@ -20,6 +20,7 @@ import {
   ShoppingCart, CalendarDays, CheckCircle2, XCircle, Check, Undo2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { ITEM_NAME_SORT_OPTIONS } from '../utils/sortOptions';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -31,6 +32,7 @@ const SORT_OPTIONS = [
   { value: 'oldest', label: 'Oldest first' },
   { value: 'name_asc', label: 'Customer A–Z' },
   { value: 'name_desc', label: 'Customer Z–A' },
+  ...ITEM_NAME_SORT_OPTIONS,
   { value: 'qty_desc', label: 'Quantity: high to low' },
   { value: 'qty_asc', label: 'Quantity: low to high' }
 ];
@@ -957,13 +959,15 @@ const Orders = () => {
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block">Notes <span className="font-normal text-slate-400">(optional)</span></label>
+                  <label className="mb-1.5 block">
+                    {formData.type === 'return order' ? 'Reason for return' : 'Notes'} <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
                   <textarea
                     rows={2}
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     className="w-full resize-none"
-                    placeholder="Delivery notes, billing instructions…"
+                    placeholder={formData.type === 'return order' ? 'Why is this order being returned? e.g. damaged in transit, wrong shade…' : 'Delivery notes, billing instructions…'}
                   />
                 </div>
               </div>

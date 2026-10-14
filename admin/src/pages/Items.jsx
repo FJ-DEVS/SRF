@@ -1144,8 +1144,10 @@ const Items = () => {
                                 : <ArrowUpFromLine className="h-3 w-3" />}
                             </span>
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-medium capitalize text-slate-700">{a.type}</p>
-                              <p className="text-[11px] text-slate-400">{formatDate(a.date)}</p>
+                              <p className="truncate text-xs font-medium text-slate-700">{a.partyName || '—'}</p>
+                              <p className="text-[11px] text-slate-400">
+                                {a.type === 'return order' && 'Return · '}{formatDate(a.date)}
+                              </p>
                             </div>
                             <span className="text-xs font-semibold text-slate-700">× {a.quantity}</span>
                             <StatusBadge status={a.status} />

@@ -192,7 +192,7 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
 
           {order.notes && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">Notes</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">{isReturn ? 'Reason for return' : 'Notes'}</p>
               <p className="mt-1 whitespace-pre-wrap text-[13px] text-amber-900">{order.notes}</p>
             </div>
           )}

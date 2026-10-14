@@ -3,6 +3,7 @@ const Item = require('../models/Item');
 const Order = require('../models/Order');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
+const { itemNameKeyStages, ITEM_NAME_SORTS, ITEM_NAME_SORT_FIELDS } = require('../utils/itemNameSort');
 const { parseCheckLevel, categoryCheckLevels, decorateCheckLevel, belowCheckLevelQuery } =
   require('../utils/checkLevel');
 const {
@@ -55,6 +56,27 @@ exports.createItem = async (req, res) => {
   }
 };
 
+// One page of a filtered item list. The "Item A–Z" sorts work on keys derived
+// from the name, so they run as an aggregation; every other sort is a plain find.
+// fields: optional space-separated list to return, as for .select()
+const findItemsPage = (query, sort, skip, limit, fields) => {
+  if (ITEM_NAME_SORTS[sort]) {
+    return Item.aggregate([
+      { $match: query },
+      ...itemNameKeyStages('$name'),
+      { $sort: { ...ITEM_NAME_SORTS[sort], _id: 1 } },
+      { $skip: skip },
+      { $limit: limit },
+      fields
+        ? { $project: Object.fromEntries(fields.split(' ').map((f) => [f, 1])) }
+        : { $unset: ITEM_NAME_SORT_FIELDS }
+    ]);
+  }
+  const find = Item.find(query).lean();
+  if (fields) find.select(fields);
+  return applySort(find, sort).skip(skip).limit(limit);
+};
+
 // Get all items
 exports.getAllItems = async (req, res) => {
   try {
@@ -88,9 +110,7 @@ exports.getAllItems = async (req, res) => {
     const query = conditions.length ? { $and: conditions } : {};
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const items = await applySort(Item.find(query).lean(), sort)
-      .skip(skip)
-      .limit(parseInt(limit));
+    const items = await findItemsPage(query, sort, skip, parseInt(limit));
 
     const total = await Item.countDocuments(query);
 
@@ -237,12 +257,9 @@ exports.getItemsForSalesman = async (req, res) => {
 
     const levelsByCategory = await categoryCheckLevels();
 
-    const items = await applySort(
-      Item.find(query).select('name price quantity category checkLevel createdAt').lean(),
-      sort
-    )
-      .skip(skip)
-      .limit(parseInt(limit));
+    const items = await findItemsPage(
+      query, sort, skip, parseInt(limit), 'name price quantity category checkLevel createdAt'
+    );
 
     const total = await Item.countDocuments(query);
 
@@ -309,12 +326,18 @@ exports.getItemStats = async (req, res) => {
       { $match: { 'items.item': itemId } },
       { $unwind: '$items' },
       { $match: { 'items.item': itemId } },
+      // The party is a customer on sell/return orders, a vendor on purchases
+      { $lookup: { from: 'customers', localField: 'customerName', foreignField: '_id', as: 'customer' } },
+      { $lookup: { from: 'vendors', localField: 'customerName', foreignField: '_id', as: 'vendor' } },
       {
         $project: {
           type: 1,
           status: 1,
           createdAt: 1,
-          quantity: '$items.quantity'
+          quantity: '$items.quantity',
+          partyName: {
+            $arrayElemAt: [{ $cond: [{ $eq: ['$customerModel', 'Vendor'] }, '$vendor.name', '$customer.name'] }, 0]
+          }
         }
       },
       { $sort: { createdAt: -1 } }
@@ -345,6 +368,7 @@ exports.getItemStats = async (req, res) => {
         recentActivity: rows.slice(0, 6).map((r) => ({
           orderId: r._id,
           type: r.type,
+          partyName: r.partyName,
           status: r.status,
           quantity: r.quantity,
           date: r.createdAt
