@@ -24,12 +24,28 @@ const byText = (a, b) =>
 
 const byDate = (a, b) => new Date(a || 0) - new Date(b || 0);
 
+// "1001 SF - 0.8mm" → serial 1001 and the rest "SF - 0.8mm", spacing collapsed
+// the same way the server's item sorts do it
+const splitSerial = (name) => {
+  const clean = String(name || '').trim().replace(/\s+/g, ' ');
+  const match = clean.match(/^(\d+) (.*)$/);
+  return match ? { serial: Number(match[1]), rest: match[2] } : { serial: null, rest: clean };
+};
+
+// Every "SF - 0.8mm" together, serials in order within it
+const byItemNoSerial = (a, b) => {
+  const x = splitSerial(a);
+  const y = splitSerial(b);
+  return x.rest.localeCompare(y.rest, 'en', { sensitivity: 'base' }) || (x.serial ?? Infinity) - (y.serial ?? Infinity) || 0;
+};
+
 // A placement row is { rak, placement }. Every comparator falls back to the rak
 // code then the item name, so equal rows keep a stable, predictable order.
 const PLACEMENT_SORTS = {
   rak_asc: (a, b) => byText(a.rak.code, b.rak.code),
   rak_desc: (a, b) => byText(b.rak.code, a.rak.code),
   item_asc: (a, b) => byText(a.placement.item?.name, b.placement.item?.name),
+  item_noserial_asc: (a, b) => byItemNoSerial(a.placement.item?.name, b.placement.item?.name),
   item_desc: (a, b) => byText(b.placement.item?.name, a.placement.item?.name),
   qty_asc: (a, b) => (a.placement.quantity || 0) - (b.placement.quantity || 0),
   qty_desc: (a, b) => (b.placement.quantity || 0) - (a.placement.quantity || 0),

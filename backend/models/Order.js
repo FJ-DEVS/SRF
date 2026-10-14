@@ -101,6 +101,11 @@ const orderSchema = new mongoose.Schema({
     default: null,
     trim: true
   },
+  // When that bill number was entered; cleared with it on a revert
+  billedAt: {
+    type: Date,
+    default: null
+  },
   // Set once the order is marked "rolled" and its stock has been taken off the
   // raks. Guards against a revert-then-advance deducting the same order twice.
   placementsConsumed: {

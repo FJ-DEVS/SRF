@@ -11,8 +11,10 @@ import StatusBadge from '../../components/StatusBadge';
 import BillBadge from '../../components/BillBadge';
 import CargoBadge from '../../components/CargoBadge';
 import { orderQty, formatDate } from '../../utils/orderMath';
-import { callHref } from '../../utils/contact';
+import { callHref, whatsappHref } from '../../utils/contact';
+import { renderOrderImage } from '../../utils/orderImage';
 import useCargoOptions from '../../utils/useCargoOptions';
+import { ITEM_NAME_SORT_OPTIONS } from '../../utils/sortOptions';
 import { Search, X, Phone, CalendarDays, PackageCheck, ShoppingCart, ChevronRight, Share2 } from 'lucide-react';
 
 // Rows per page: 10 by default, adjustable from the pager
@@ -33,6 +35,7 @@ const SORT_OPTIONS = [
   { value: 'bill_asc', label: 'Bill no.: low to high' },
   { value: 'name_asc', label: 'Customer A–Z' },
   { value: 'name_desc', label: 'Customer Z–A' },
+  ...ITEM_NAME_SORT_OPTIONS,
   { value: 'qty_desc', label: 'Quantity: high to low' },
   { value: 'qty_asc', label: 'Quantity: low to high' }
 ];
@@ -82,9 +85,85 @@ const CallLink = ({ phone, className = '', children }) => {
   );
 };
 
+// The delivery-confirmation message the WhatsApp button types in for the customer
+const deliveryMessage = (order) => {
+  const salesman = order.createdByType === 'admin' ? 'Admin' : (order.createdBy?.name || 'our salesman');
+  const customer = order.customerName?.name || 'you';
+  const cargo = order.cargo?.name ? ` through ${order.cargo.name}` : '';
+  // Bills entered before billedAt was recorded fall back to the last update
+  const billedOn = formatDate(order.billedAt || order.updatedAt);
+  return `Thank you for choosing Skydecor Laminates. Kindly confirm the delivery of order placed by ${salesman} for ${customer}. The order was dispatched${cargo} on ${billedOn}. We expect a confirmation from your side.`;
+};
+
+const WhatsAppIcon = ({ className = '' }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+  </svg>
+);
+
+// One tap: the order image goes onto the clipboard, then WhatsApp opens on the
+// customer's chat with the confirmation message typed in. WhatsApp links can
+// carry text but not files, so the image is pasted into the chat from there.
+const WhatsAppButton = ({ order, onAlert, className = '', children }) => {
+  const [busy, setBusy] = useState(false);
+  const href = whatsappHref(order.customerName?.phone, deliveryMessage(order));
+  const base = `flex items-center justify-center gap-1.5 font-semibold transition-colors ${className}`;
+  if (!href) {
+    return (
+      <span className={`${base} cursor-not-allowed bg-slate-100 text-slate-400`} title="No phone number">
+        {children}
+      </span>
+    );
+  }
+
+  const handleClick = async (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    let copied = false;
+    try {
+      // The write starts inside the tap (Safari insists) and takes the image as
+      // a promise, so it can finish rendering while the clipboard waits
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': renderOrderImage(order) })]);
+        copied = true;
+      }
+    } catch (error) {
+      console.error('WhatsApp image copy error:', error);
+    } finally {
+      setBusy(false);
+    }
+
+    const win = window.open(href, '_blank');
+    if (win) win.opener = null;
+    else window.location.href = href;
+
+    onAlert(
+      copied ? 'Paste the Order Image' : 'Image Not Attached',
+      copied
+        ? 'WhatsApp is open with the message. The order image is copied — paste it into the chat (long-press › Paste, or Ctrl/Cmd+V) and send.'
+        : 'WhatsApp is open with the message, but this browser could not copy the order image. Use Share to send the image.',
+      copied ? 'success' : 'info'
+    );
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={busy}
+      className={`${base} bg-[#25D366] text-white hover:bg-[#1ebe5b] disabled:opacity-60`}
+      title="WhatsApp delivery confirmation"
+      aria-label="Send delivery confirmation on WhatsApp"
+    >
+      {children}
+    </button>
+  );
+};
+
 // Just the basics — who, which bill, where it stands, how big. The items and
 // the full customer are one tap away in the detail view.
-const OrderRow = ({ order, onOpen, onShare }) => {
+const OrderRow = ({ order, onOpen, onShare, onAlert }) => {
   const items = order.items || [];
   return (
     <div className="flex cursor-pointer items-center gap-3 p-3.5" onClick={() => onOpen(order)}>
@@ -117,6 +196,9 @@ const OrderRow = ({ order, onOpen, onShare }) => {
         <CallLink phone={order.customerName?.phone} className="h-10 w-10 rounded-xl">
           <Phone className="h-4 w-4" />
         </CallLink>
+        <WhatsAppButton order={order} onAlert={onAlert} className="h-10 w-10 rounded-xl">
+          <WhatsAppIcon className="h-4 w-4" />
+        </WhatsAppButton>
         <ChevronRight className="h-4 w-4 text-slate-300" />
       </div>
     </div>
@@ -369,7 +451,7 @@ const CrmOrders = () => {
           <>
             <div className="divide-y divide-slate-100">
               {orders.map((order) => (
-                <OrderRow key={order._id} order={order} onOpen={setSelectedOrder} onShare={setShareOrder} />
+                <OrderRow key={order._id} order={order} onOpen={setSelectedOrder} onShare={setShareOrder} onAlert={showAlert} />
               ))}
             </div>
 
@@ -408,6 +490,10 @@ const CrmOrders = () => {
               <Phone className="h-4 w-4" />
               Call
             </CallLink>
+            <WhatsAppButton order={selectedOrder} onAlert={showAlert} className="h-9 rounded-lg px-3.5 text-[13px]">
+              <WhatsAppIcon className="h-4 w-4" />
+              WhatsApp
+            </WhatsAppButton>
             {selectedOrder.status === 'billed' && (
               <button
                 type="button"

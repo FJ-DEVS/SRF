@@ -2,10 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 import PageHeader from '../components/PageHeader';
-import { Trophy, Medal, Award, Crown } from 'lucide-react';
+import { formatDateTime } from '../utils/orderMath';
+import { Trophy, Medal, Award, Crown, FileSpreadsheet, FileText } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
+const slug = (s) => s.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+
+// "2026-10-14_15-42" in local time, so files downloaded the same day sort apart
+const fileStamp = (d) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+};
 
 const rankBadge = (rank) => {
   if (rank === 1) return <Crown className="h-4 w-4 text-amber-500" />;
@@ -94,9 +106,113 @@ const SchemaLeaderboard = () => {
       ? Math.max(...result.schema.tiers.map((t) => t.pointsRequired))
       : null;
 
+  /* ---------- Export ---------- */
+
+  // Both exports carry exactly what is on screen — the chosen schema, the
+  // salesman filter and every standing — stamped with when it was downloaded
+  const exportContext = () => {
+    const schema = result.schema;
+    const salesmanName = salesmen.find((s) => s._id === selectedSalesman)?.name;
+    const now = new Date();
+    return {
+      schema,
+      period: `${formatDate(schema.fromDate)} to ${formatDate(schema.toDate)}`,
+      salesmanLabel: salesmanName || 'All salesmen',
+      downloadedAt: formatDateTime(now),
+      fileBase: `leaderboard_${slug(schema.name)}${salesmanName ? `_${slug(salesmanName)}` : ''}_${fileStamp(now)}`,
+      rows: leaderboard.map((row) => [
+        row.rank,
+        row.name,
+        row.phone || '',
+        row.salesmen?.length ? row.salesmen.map((s) => s.name).join(', ') : '-',
+        row.points,
+        row.tier || '-'
+      ])
+    };
+  };
+
+  const EXPORT_HEAD = ['Rank', 'Customer', 'Phone', 'Salesman', 'Points', 'Tier / Gift'];
+
+  const handleExportExcel = () => {
+    const ctx = exportContext();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['Leaderboard'],
+      ['Schema', ctx.schema.name],
+      ['Period', ctx.period],
+      ...(ctx.schema.runBy ? [['Run by', ctx.schema.runBy]] : []),
+      ['Salesman', ctx.salesmanLabel],
+      ['Downloaded on', ctx.downloadedAt],
+      [],
+      EXPORT_HEAD,
+      ...ctx.rows
+    ]);
+    sheet['!cols'] = [{ wch: 14 }, { wch: 42 }, { wch: 14 }, { wch: 24 }, { wch: 8 }, { wch: 24 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Leaderboard');
+    XLSX.writeFile(workbook, `${ctx.fileBase}.xlsx`);
+  };
+
+  const handleExportPdf = () => {
+    const ctx = exportContext();
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 40;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Leaderboard', margin, 48);
+    doc.setFontSize(11);
+    doc.text(ctx.schema.name, margin, 68);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(90);
+    doc.text(`Period: ${ctx.period}${ctx.schema.runBy ? `  ·  Run by ${ctx.schema.runBy}` : ''}`, margin, 84);
+    doc.text(`Salesman: ${ctx.salesmanLabel}  ·  ${ctx.rows.length} customer${ctx.rows.length === 1 ? '' : 's'} with points`, margin, 97);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30);
+    doc.text(`Downloaded on: ${ctx.downloadedAt}`, pageWidth - margin, 48, { align: 'right' });
+
+    autoTable(doc, {
+      head: [EXPORT_HEAD],
+      body: ctx.rows,
+      startY: 110,
+      margin: { left: margin, right: margin, bottom: 40 },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 40 },
+        4: { halign: 'right', fontStyle: 'bold' }
+      },
+      // Every page repeats the download stamp so a loose page still says when it was taken
+      didDrawPage: () => {
+        const pageHeight = doc.internal.pageSize.getHeight();
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text(`Downloaded on ${ctx.downloadedAt}`, margin, pageHeight - 20);
+        doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 20, { align: 'right' });
+      }
+    });
+
+    doc.save(`${ctx.fileBase}.pdf`);
+  };
+
+  const canExport = !loading && Boolean(result?.schema) && leaderboard.length > 0;
+
   return (
     <div className="srf-page">
-      <PageHeader title="Leaderboard" subtitle="Customer standings for a schema period" />
+      <PageHeader title="Leaderboard" subtitle="Customer standings for a schema period">
+        <button onClick={handleExportExcel} disabled={!canExport} className="srf-btn srf-btn-secondary">
+          <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+          Export Excel
+        </button>
+        <button onClick={handleExportPdf} disabled={!canExport} className="srf-btn srf-btn-secondary">
+          <FileText className="h-4 w-4 text-rose-500" />
+          Export PDF
+        </button>
+      </PageHeader>
 
       {/* Schema + salesman filters */}
       <div className="srf-toolbar">
