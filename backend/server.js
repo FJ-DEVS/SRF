@@ -38,6 +38,7 @@ const crmManagerRoutes = require('./routes/crmManager');
 const placementRoutes = require('./routes/placement');
 const uploadRoutes = require('./routes/upload');
 const databaseRoutes = require('./routes/database');
+const reorderRoutes = require('./routes/reorder');
 const Category = require('./models/Category');
 
 // Use routes
@@ -58,6 +59,7 @@ app.use('/api/crm', crmManagerRoutes);
 app.use('/api/placements', placementRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/database', databaseRoutes);
+app.use('/api/reorder', reorderRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];
