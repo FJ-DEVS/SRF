@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
@@ -17,7 +17,7 @@ import { TYPE_STYLES, typeStyle } from '../utils/orderType';
 import { orderTotal, orderQty } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Download, RefreshCw, RotateCcw, Share2,
-  ShoppingCart, CalendarDays, CheckCircle2, XCircle, Check, Undo2
+  ShoppingCart, CalendarDays, CheckCircle2, XCircle, Check, Undo2, Package
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ITEM_NAME_SORT_OPTIONS } from '../utils/sortOptions';
@@ -39,6 +39,8 @@ const SORT_OPTIONS = [
 
 const Orders = () => {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -49,8 +51,10 @@ const Orders = () => {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
   const [typeFilter, setTypeFilter] = useState('');
   const [cargoFilter, setCargoFilter] = useState('');
+  // Set from an item's detail view ("View all orders") — every year by default
+  const [itemFilter, setItemFilter] = useState(searchParams.get('item') || '');
   const [monthFilter, setMonthFilter] = useState('');
-  const [yearFilter, setYearFilter] = useState(new Date().getFullYear().toString());
+  const [yearFilter, setYearFilter] = useState(itemFilter ? '' : new Date().getFullYear().toString());
   const [sortBy, setSortBy] = useState('newest');
   const [todayOnly, setTodayOnly] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -101,12 +105,26 @@ const Orders = () => {
 
   useEffect(() => {
     fetchOrders();
-  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, itemFilter, monthFilter, yearFilter, sortBy, todayOnly, currentPage, pageSize]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, typeFilter, cargoFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
+  }, [searchTerm, statusFilter, typeFilter, cargoFilter, itemFilter, monthFilter, yearFilter, sortBy, todayOnly, pageSize]);
+
+  // Items → "Create Purchase Order" on the below-check-level list lands here
+  // with those items; open the new-order form as a purchase order holding
+  // them, then drop the router state so a refresh does not reopen it
+  useEffect(() => {
+    const purchaseItems = location.state?.purchaseItems;
+    if (!purchaseItems?.length) return;
+    setSelectedOrder(null);
+    setFormData({ type: 'purchase order', customerName: '', cargo: '', notes: '' });
+    setSelectedItems(purchaseItems);
+    setReturnDraft({ order: null, lines: [] });
+    setShowModal(true);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.state]);
 
   const fetchOrders = async () => {
     try {
@@ -117,6 +135,7 @@ const Orders = () => {
           status: statusFilter,
           type: typeFilter,
           cargo: cargoFilter,
+          item: itemFilter,
           month: monthFilter,
           year: yearFilter,
           sort: sortBy,
@@ -642,7 +661,7 @@ const Orders = () => {
               {cargo.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
             </select>
 
-            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>
+            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly || !yearFilter}>
               <option value="">All months</option>
               {MONTHS.map((m, i) => (
                 <option key={m} value={i + 1}>{m}</option>
@@ -650,6 +669,7 @@ const Orders = () => {
             </select>
 
             <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} disabled={todayOnly}>
+              <option value="">All years</option>
               {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
                 <option key={year} value={year}>{year}</option>
               ))}
@@ -674,7 +694,20 @@ const Orders = () => {
             Today's orders
           </button>
 
-          {(searchTerm || statusFilter || typeFilter || cargoFilter || monthFilter || todayOnly) && (
+          {itemFilter && (
+            <button
+              type="button"
+              onClick={() => setItemFilter('')}
+              className="srf-chip srf-chip-active max-w-full"
+              title="Show orders for every item"
+            >
+              <Package className="h-3 w-3 shrink-0" />
+              <span className="truncate">{items.find((i) => i._id === itemFilter)?.name || 'Selected item'}</span>
+              <X className="h-3 w-3 shrink-0" />
+            </button>
+          )}
+
+          {(searchTerm || statusFilter || typeFilter || cargoFilter || itemFilter || monthFilter || todayOnly) && (
             <button
               type="button"
               onClick={() => {
@@ -682,6 +715,7 @@ const Orders = () => {
                 setStatusFilter('');
                 setTypeFilter('');
                 setCargoFilter('');
+                setItemFilter('');
                 setMonthFilter('');
                 setTodayOnly(false);
                 setSortBy('newest');

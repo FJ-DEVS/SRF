@@ -569,7 +569,7 @@ exports.markRollerCustomerSeen = async (req, res) => {
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, type, month, year, date, search, customer, cargo, before, since, sort = 'newest', page = 1, limit = 10 } = req.query;
+    const { status, type, month, year, date, search, customer, cargo, item, before, since, sort = 'newest', page = 1, limit = 10 } = req.query;
 
     const conditions = [];
 
@@ -596,6 +596,11 @@ exports.getAllOrders = async (req, res) => {
     if (type) conditions.push({ type });
     if (customer && mongoose.Types.ObjectId.isValid(customer)) conditions.push({ customerName: customer });
     if (cargo && mongoose.Types.ObjectId.isValid(cargo)) conditions.push({ cargo });
+    // Every order carrying one item — cast up front, the computed sorts run an
+    // aggregate and that does not cast strings to ObjectIds
+    if (item && mongoose.Types.ObjectId.isValid(item)) {
+      conditions.push({ 'items.item': new mongoose.Types.ObjectId(item) });
+    }
 
     // Date filters: exact day ("today" / YYYY-MM-DD) wins over month/year
     if (date) {
