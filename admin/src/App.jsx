@@ -12,6 +12,8 @@ import Salesmen from './pages/Salesmen';
 import Customers from './pages/Customers';
 import Vendors from './pages/Vendors';
 import Items from './pages/Items';
+import Reorder from './pages/Reorder';
+import ReorderLevels from './pages/ReorderLevels';
 import Cargo from './pages/Cargo';
 import Orders from './pages/Orders';
 import Consolidation from './pages/Consolidation';
@@ -103,6 +105,8 @@ const adminPages = [
   { path: '/customers', element: <Customers /> },
   { path: '/vendors', element: <Vendors /> },
   { path: '/items', element: <Items /> },
+  { path: '/reorder', element: <Reorder /> },
+  { path: '/reorder-levels', element: <ReorderLevels /> },
   { path: '/raks', element: <Raks /> },
   { path: '/cargo', element: <Cargo /> },
   { path: '/orders', element: <Orders /> },

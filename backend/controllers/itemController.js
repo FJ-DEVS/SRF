@@ -76,6 +76,8 @@ const findItemsPage = (query, sort, skip, limit, fields) => {
   if (fields) find.select(fields);
   return applySort(find, sort).skip(skip).limit(limit);
 };
+// The reorder pages list items with the same filters and sorts
+exports.findItemsPage = findItemsPage;
 
 // Get all items
 exports.getAllItems = async (req, res) => {
