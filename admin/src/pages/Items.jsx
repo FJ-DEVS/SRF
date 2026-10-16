@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import api from '../utils/api';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import Pagination from '../components/Pagination';
@@ -9,11 +11,27 @@ import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
 import SortSelect from '../components/SortSelect';
 import { ITEM_SORT_OPTIONS, DEFAULT_SORT } from '../utils/sortOptions';
+import { formatDateTime } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, Tag, TrendingUp, Package,
   ArrowDownToLine, ArrowUpFromLine, IndianRupee, Boxes, Check, History,
-  Download, Upload, AlertTriangle, ShieldCheck, PackageX, ArchiveRestore
+  Download, Upload, AlertTriangle, ShieldCheck, PackageX, ArchiveRestore,
+  FileText, ShoppingCart, Undo2, ArrowRight
 } from 'lucide-react';
+
+// Recent-activity marker per order type — colours match TYPE_STYLES: stock
+// coming in (emerald), going out (indigo), coming back (rose)
+const ACTIVITY_MARKS = {
+  'purchase order': { Icon: ArrowDownToLine, className: 'bg-emerald-50 text-emerald-600' },
+  'sell order': { Icon: ArrowUpFromLine, className: 'bg-indigo-50 text-indigo-600' },
+  'return order': { Icon: Undo2, className: 'bg-rose-50 text-rose-600' }
+};
+
+// "2026-10-14_15-42" in local time, so files downloaded the same day sort apart
+const fileStamp = (d) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
+};
 
 // Asks how many pieces to move between an item's stock and its damaged count
 const PiecesModal = ({ title, itemName, available, availableLabel, hint, confirmLabel, confirmClass, onClose, onConfirm }) => {
@@ -80,6 +98,7 @@ const PiecesModal = ({ title, itemName, available, availableLabel, hint, confirm
 };
 
 const Items = () => {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -127,6 +146,8 @@ const Items = () => {
   const fileInputRef = useRef(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
+  // Below-check-level PDF / purchase order — both fetch the full filtered list
+  const [reorderLoading, setReorderLoading] = useState('');
 
   // 'stock' lists every item; 'damaged' only the pieces marked damaged
   const [view, setView] = useState('stock');
@@ -322,6 +343,16 @@ const Items = () => {
 
   /* ---------- Excel export/import ---------- */
 
+  // "1mm_below-check-level_search-ash" — names an export after the filters behind it
+  const filterSuffix = () => {
+    const slug = (s) => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    return [
+      sizeFilter && slug(sizeFilter),
+      stockState && `${stockState}-check-level`,
+      searchTerm && `search-${slug(searchTerm)}`
+    ].filter(Boolean).join('_');
+  };
+
   // Exports exactly what the list is showing — the active category, search,
   // stock filter and sort all carry over
   const handleExportExcel = async () => {
@@ -349,12 +380,7 @@ const Items = () => {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Items');
 
-      const slug = (s) => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-      const suffix = [
-        sizeFilter && slug(sizeFilter),
-        stockState && `${stockState}-check-level`,
-        searchTerm && `search-${slug(searchTerm)}`
-      ].filter(Boolean).join('_');
+      const suffix = filterSuffix();
 
       XLSX.writeFile(
         workbook,
@@ -415,6 +441,102 @@ const Items = () => {
     } finally {
       setImportLoading(false);
     }
+  };
+
+  /* ---------- Below check level: PDF + purchase order ---------- */
+
+  // Every item behind the below-check-level view, across all its pages — the
+  // category, search and sort carry over, so the PDF and the purchase order
+  // hold exactly what the list is showing
+  const fetchBelowCheckLevel = async (kind) => {
+    setReorderLoading(kind);
+    try {
+      const rows = await fetchAll('/items', listFilters());
+      if (rows.length === 0) showAlert('No Data', 'No items match the current filters', 'info');
+      return rows;
+    } catch {
+      showAlert('Error', 'Failed to load the items below check level', 'error');
+      return [];
+    } finally {
+      setReorderLoading('');
+    }
+  };
+
+  const handleExportBelowPdf = async () => {
+    const rows = await fetchBelowCheckLevel('pdf');
+    if (rows.length === 0) return;
+
+    const now = new Date();
+    const downloadedAt = formatDateTime(now);
+    const sortLabel = ITEM_SORT_OPTIONS.find((o) => o.value === sortBy)?.label;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 40;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Items Below Check Level', margin, 48);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(90);
+    doc.text(`Category: ${sizeFilter || 'All categories'}${searchTerm ? `  ·  Search: "${searchTerm}"` : ''}`, margin, 68);
+    doc.text(`${rows.length} item${rows.length === 1 ? '' : 's'}${sortLabel ? `  ·  Sort: ${sortLabel}` : ''}`, margin, 81);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30);
+    doc.text(`Downloaded on: ${downloadedAt}`, pageWidth - margin, 48, { align: 'right' });
+
+    autoTable(doc, {
+      head: [['#', 'Item', 'Category', 'Price (Rs.)', 'In Stock', 'Check Level']],
+      body: rows.map((item, i) => [
+        i + 1,
+        item.name,
+        item.category || '-',
+        item.price.toLocaleString('en-IN'),
+        item.quantity,
+        item.effectiveCheckLevel ?? '-'
+      ]),
+      startY: 96,
+      margin: { left: margin, right: margin, bottom: 40 },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 32 },
+        3: { halign: 'right' },
+        4: { halign: 'right', fontStyle: 'bold' },
+        5: { halign: 'right' }
+      },
+      // Every page repeats the download stamp so a loose page still says when it was taken
+      didDrawPage: () => {
+        const pageHeight = doc.internal.pageSize.getHeight();
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text(`Downloaded on ${downloadedAt}`, margin, pageHeight - 20);
+        doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 20, { align: 'right' });
+      }
+    });
+
+    doc.save(`items_${filterSuffix()}_${fileStamp(now)}.pdf`);
+  };
+
+  // Opens a new purchase order on the Orders page holding every item in view,
+  // each pre-filled with just enough pieces to lift it back above its check level
+  const handleCreatePurchaseOrder = async () => {
+    const rows = await fetchBelowCheckLevel('order');
+    if (rows.length === 0) return;
+    navigate('/orders', {
+      state: {
+        purchaseItems: rows.map((item) => ({
+          itemId: item._id,
+          name: item.name,
+          price: item.price,
+          availableQty: item.quantity,
+          quantity: Math.max((item.effectiveCheckLevel ?? 0) - item.quantity + 1, 1)
+        }))
+      }
+    });
   };
 
   /* ---------- Damaged stock ---------- */
@@ -693,7 +815,7 @@ const Items = () => {
 
         {/* Check level chips */}
         {view === 'stock' && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setStockState(stockState === 'below' ? '' : 'below')}
@@ -710,6 +832,32 @@ const Items = () => {
             <ShieldCheck className="h-3 w-3" />
             Above check level
           </button>
+
+          {/* Reorder tools — act on every item the below-check-level view holds */}
+          {stockState === 'below' && (
+            <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+              <button
+                type="button"
+                onClick={handleExportBelowPdf}
+                disabled={loading || items.length === 0 || Boolean(reorderLoading)}
+                className="srf-btn srf-btn-secondary !py-1.5 !text-xs"
+                title={`PDF of all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
+              >
+                <FileText className="h-3.5 w-3.5 text-rose-500" />
+                {reorderLoading === 'pdf' ? 'Preparing…' : 'Download PDF'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCreatePurchaseOrder}
+                disabled={loading || items.length === 0 || Boolean(reorderLoading)}
+                className="srf-btn srf-btn-primary !py-1.5 !text-xs"
+                title={`Purchase order for all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                {reorderLoading === 'order' ? 'Loading…' : 'Create Purchase Order'}
+              </button>
+            </div>
+          )}
         </div>
         )}
       </div>
@@ -1125,23 +1273,33 @@ const Items = () => {
 
                   {/* Recent activity */}
                   <div>
-                    <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      <History className="h-3.5 w-3.5" /> Recent activity
-                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                        <History className="h-3.5 w-3.5" /> Recent activity
+                      </p>
+                      {detailStats.recentActivity.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/orders?item=${detailItem._id}`)}
+                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
+                        >
+                          View all orders
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
                     {detailStats.recentActivity.length === 0 ? (
                       <p className="mt-2 rounded-lg bg-slate-50 px-3 py-3 text-center text-xs text-slate-400">
                         No orders yet for this item
                       </p>
                     ) : (
                       <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
-                        {detailStats.recentActivity.map((a, i) => (
+                        {detailStats.recentActivity.map((a, i) => {
+                          const { Icon, className } = ACTIVITY_MARKS[a.type] || ACTIVITY_MARKS['sell order'];
+                          return (
                           <div key={i} className="flex items-center gap-2.5 px-3 py-2">
-                            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
-                              a.type === 'purchase order' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
-                            }`}>
-                              {a.type === 'purchase order'
-                                ? <ArrowDownToLine className="h-3 w-3" />
-                                : <ArrowUpFromLine className="h-3 w-3" />}
+                            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${className}`}>
+                              <Icon className="h-3 w-3" />
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-xs font-medium text-slate-700">{a.partyName || '—'}</p>
@@ -1152,7 +1310,8 @@ const Items = () => {
                             <span className="text-xs font-semibold text-slate-700">× {a.quantity}</span>
                             <StatusBadge status={a.status} />
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
