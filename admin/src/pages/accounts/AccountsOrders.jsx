@@ -117,7 +117,9 @@ const AccountsOrders = () => {
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  // Sell orders open first. A dashboard link arrives with a status and counts
+  // across every type, so it lands on all types to match its figure.
+  const [typeFilter, setTypeFilter] = useState(() => (searchParams.get('status') ? '' : 'sell order'));
   const [cargoFilter, setCargoFilter] = useState('');
   const cargos = useCargoOptions();
   const [monthFilter, setMonthFilter] = useState('');
@@ -164,12 +166,13 @@ const AccountsOrders = () => {
 
   const fetchCounts = useCallback(async () => {
     try {
-      const response = await api.get('/orders/stats');
+      // Tab counts follow the type filter so they match the list below
+      const response = await api.get('/orders/stats', { params: { type: typeFilter } });
       if (response.data.success) setCounts(response.data.data.orders);
     } catch (error) {
       console.error('Error fetching order counts:', error);
     }
-  }, []);
+  }, [typeFilter]);
 
   useEffect(() => {
     fetchOrders();
@@ -256,12 +259,12 @@ const AccountsOrders = () => {
     </>
   );
 
-  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter || cargoFilter || monthFilter || yearFilter || todayOnly);
+  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter !== 'sell order' || cargoFilter || monthFilter || yearFilter || todayOnly);
 
   const clearFilters = () => {
     setSearchTerm('');
     setStatusFilter('');
-    setTypeFilter('');
+    setTypeFilter('sell order');
     setCargoFilter('');
     setMonthFilter('');
     setYearFilter('');

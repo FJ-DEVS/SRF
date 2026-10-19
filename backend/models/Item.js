@@ -19,6 +19,25 @@ const reorderRuleSchema = new mongoose.Schema({
     enum: ['days', 'weeks', 'months', 'years'],
     default: 'months'
   },
+  // Which days "the last 2 months" covers: 'rolling' runs from the same day
+  // two months back up to today, 'calendar' takes the two whole months
+  // before this one, 'custom' is a fixed pair of dates picked on a calendar
+  periodMode: {
+    type: String,
+    enum: ['rolling', 'calendar', 'custom'],
+    default: 'rolling'
+  },
+  // Custom mode only — first and last day counted, as "YYYY-MM-DD"
+  periodFrom: {
+    type: String,
+    default: null,
+    match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD']
+  },
+  periodTo: {
+    type: String,
+    default: null,
+    match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD']
+  },
   criteria: {
     type: String,
     enum: ['higher', 'lower'],

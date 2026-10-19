@@ -9,7 +9,7 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
 import { formatDateTime } from '../utils/orderMath';
-import { ruleText, periodText } from '../utils/reorderRules';
+import { ruleText, periodText, hasPeriod, formatRange } from '../utils/reorderRules';
 import {
   Search, ClipboardList, SlidersHorizontal, ArrowRight, AlertTriangle, ShieldCheck, CircleOff,
   Download, FileText, ShoppingCart, PackageSearch, Boxes, TrendingDown, IndianRupee, Clock
@@ -48,7 +48,7 @@ const levelBasis = (row) => {
   const rule = row.reorder?.level;
   const parts = [];
   if (rule?.quantity != null) parts.push(`Fixed ${rule.quantity}`);
-  if (rule?.periodValue) parts.push(`Consumed ${row.levelConsumption} in the ${periodText(rule)}`);
+  if (hasPeriod(rule)) parts.push(`Consumed ${row.levelConsumption} between ${formatRange(row.levelWindow)} (${periodText(rule)})`);
   if (parts.length === 2) parts.push(`→ ${rule.criteria} of the two`);
   return parts.join(' · ');
 };
