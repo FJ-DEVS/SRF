@@ -10,6 +10,7 @@ import SortSelect from '../../components/SortSelect';
 import StatusBadge from '../../components/StatusBadge';
 import BillBadge from '../../components/BillBadge';
 import CargoBadge from '../../components/CargoBadge';
+import TypeBadge from '../../components/TypeBadge';
 import { orderQty, formatDate } from '../../utils/orderMath';
 import { callHref, whatsappHref } from '../../utils/contact';
 import { renderOrderImage } from '../../utils/orderImage';
@@ -26,6 +27,15 @@ const STATUS_TABS = [
   { value: 'billed', label: 'Billed' },
   { value: 'delivered', label: 'Delivered' },
   { value: '', label: 'All' }
+];
+
+// Sell orders are the day-to-day work, so they open first; purchase and return
+// orders are there to look up. The status tabs only apply to sell orders.
+const TYPE_OPTIONS = [
+  { value: 'sell order', label: 'Sell orders' },
+  { value: 'purchase order', label: 'Purchase orders' },
+  { value: 'return order', label: 'Return orders' },
+  { value: '', label: 'All types' }
 ];
 
 const SORT_OPTIONS = [
@@ -173,6 +183,7 @@ const OrderRow = ({ order, onOpen, onShare, onAlert }) => {
           <StatusBadge status={order.status} />
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          {order.type !== 'sell order' && <TypeBadge type={order.type} />}
           <BillBadge number={order.billNumber} />
           <span className="text-[11.5px] text-slate-400">{formatDate(order.createdAt)}</span>
         </div>
@@ -196,9 +207,12 @@ const OrderRow = ({ order, onOpen, onShare, onAlert }) => {
         <CallLink phone={order.customerName?.phone} className="h-10 w-10 rounded-xl">
           <Phone className="h-4 w-4" />
         </CallLink>
-        <WhatsAppButton order={order} onAlert={onAlert} className="h-10 w-10 rounded-xl">
-          <WhatsAppIcon className="h-4 w-4" />
-        </WhatsAppButton>
+        {/* The message asks to confirm a delivery — only a sell order has one */}
+        {order.type === 'sell order' && (
+          <WhatsAppButton order={order} onAlert={onAlert} className="h-10 w-10 rounded-xl">
+            <WhatsAppIcon className="h-4 w-4" />
+          </WhatsAppButton>
+        )}
         <ChevronRight className="h-4 w-4 text-slate-300" />
       </div>
     </div>
@@ -213,6 +227,8 @@ const CrmOrders = () => {
   // does not fire a request per keystroke
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('billed');
+  const [typeFilter, setTypeFilter] = useState('sell order');
+  const isSell = typeFilter === 'sell order';
   const [cargoFilter, setCargoFilter] = useState('');
   const cargos = useCargoOptions();
   const [sortBy, setSortBy] = useState('newest');
@@ -235,7 +251,7 @@ const CrmOrders = () => {
   const fetchOrders = useCallback(async () => {
     const id = ++requestId.current;
     try {
-      const params = { search: query, status: statusFilter, cargo: cargoFilter, sort: sortBy, page: currentPage, limit: pageSize };
+      const params = { search: query, type: typeFilter, status: isSell ? statusFilter : '', cargo: cargoFilter, sort: sortBy, page: currentPage, limit: pageSize };
       // The date period is a range on the order date: from the start of the
       // first day up to (not including) the day after the last
       if (fromDate) params.since = dayInstant(fromDate);
@@ -250,7 +266,7 @@ const CrmOrders = () => {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [query, statusFilter, cargoFilter, sortBy, fromDate, toDate, currentPage, pageSize]);
+  }, [query, typeFilter, isSell, statusFilter, cargoFilter, sortBy, fromDate, toDate, currentPage, pageSize]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -259,7 +275,7 @@ const CrmOrders = () => {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  useEffect(() => { setCurrentPage(1); }, [query, statusFilter, cargoFilter, sortBy, fromDate, toDate, pageSize]);
+  useEffect(() => { setCurrentPage(1); }, [query, typeFilter, statusFilter, cargoFilter, sortBy, fromDate, toDate, pageSize]);
 
   // Orders get billed and delivered all day — keep the list live
   useEffect(() => {
@@ -291,12 +307,13 @@ const CrmOrders = () => {
   };
 
   const hasRange = Boolean(fromDate || toDate);
-  const hasFilters = Boolean(searchTerm || hasRange || cargoFilter || statusFilter !== 'billed' || sortBy !== 'newest');
+  const hasFilters = Boolean(searchTerm || hasRange || cargoFilter || !isSell || statusFilter !== 'billed' || sortBy !== 'newest');
 
   const clearFilters = () => {
     setSearchTerm('');
     setQuery('');
     setStatusFilter('billed');
+    setTypeFilter('sell order');
     setCargoFilter('');
     setSortBy('newest');
     setFromDate('');
@@ -308,6 +325,8 @@ const CrmOrders = () => {
     : 'Dates';
 
   const tabLabel = STATUS_TABS.find((t) => t.value === statusFilter)?.label.toLowerCase();
+  // "12 billed orders", "5 purchase orders", "40 orders"
+  const countLabel = isSell ? (tabLabel === 'all' ? '' : tabLabel) : typeFilter.replace(' order', '');
 
   return (
     <div className="space-y-3">
@@ -335,7 +354,7 @@ const CrmOrders = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {STATUS_TABS.map((tab) => (
+          {isSell && STATUS_TABS.map((tab) => (
             <button
               key={tab.value || 'all'}
               type="button"
@@ -356,6 +375,15 @@ const CrmOrders = () => {
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:flex">
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            aria-label="Order type"
+            title="Order type"
+            className="col-span-2 min-w-0 sm:w-[11rem]"
+          >
+            {TYPE_OPTIONS.map((t) => <option key={t.value || 'all'} value={t.value}>{t.label}</option>)}
+          </select>
           <SortSelect value={sortBy} onChange={setSortBy} options={SORT_OPTIONS} className="min-w-0 sm:w-[13rem]" />
           <select
             value={cargoFilter}
@@ -421,7 +449,7 @@ const CrmOrders = () => {
         )}
 
         <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>{pagination.total} {tabLabel === 'all' ? '' : `${tabLabel} `}order{pagination.total === 1 ? '' : 's'}</span>
+          <span>{pagination.total} {countLabel ? `${countLabel} ` : ''}order{pagination.total === 1 ? '' : 's'}</span>
           {hasFilters && (
             <button type="button" onClick={clearFilters} className="flex items-center gap-1 font-medium hover:text-slate-600">
               <X className="h-3 w-3" />
@@ -490,10 +518,12 @@ const CrmOrders = () => {
               <Phone className="h-4 w-4" />
               Call
             </CallLink>
-            <WhatsAppButton order={selectedOrder} onAlert={showAlert} className="h-9 rounded-lg px-3.5 text-[13px]">
-              <WhatsAppIcon className="h-4 w-4" />
-              WhatsApp
-            </WhatsAppButton>
+            {selectedOrder.type === 'sell order' && (
+              <WhatsAppButton order={selectedOrder} onAlert={showAlert} className="h-9 rounded-lg px-3.5 text-[13px]">
+                <WhatsAppIcon className="h-4 w-4" />
+                WhatsApp
+              </WhatsAppButton>
+            )}
             {selectedOrder.status === 'billed' && (
               <button
                 type="button"

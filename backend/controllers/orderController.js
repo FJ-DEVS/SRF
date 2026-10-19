@@ -454,6 +454,8 @@ const rollerVisibleQuery = { type: 'sell order', customerModel: 'Customer', stat
 const rollerStatusMatch = (status) =>
   ROLLER_VISIBLE_STATUSES.includes(status) ? status : { $in: ROLLER_VISIBLE_STATUSES };
 
+const ORDER_TYPES = ['sell order', 'purchase order', 'return order'];
+
 // Customer relation managers work the billed end of the pipeline: a sell order
 // from the moment it is billed, and on to delivered. Nothing before billing.
 const CRM_VISIBLE_STATUSES = ['billed', 'delivered'];
@@ -461,6 +463,16 @@ const CRM_VISIBLE_STATUSES = ['billed', 'delivered'];
 // A CRM manager's status param: one of the visible statuses, or "all" (the default)
 const crmStatusMatch = (status) =>
   CRM_VISIBLE_STATUSES.includes(status) ? status : { $in: CRM_VISIBLE_STATUSES };
+
+// Everything a CRM manager's list may show: sell orders once billed (narrowed
+// by the status param), plus purchase and return orders at any status, to look
+// up. The type param picks between them.
+const crmVisibleQuery = (status) => ({
+  $or: [
+    { type: 'sell order', status: crmStatusMatch(status) },
+    { type: { $in: ['purchase order', 'return order'] } }
+  ]
+});
 
 // "Item A–Z" sorts go by an order's first item, the one listed on top
 const ITEM_SORT_STAGES = [
@@ -587,7 +599,7 @@ exports.getAllOrders = async (req, res) => {
     if (req.user.role === 'roller') {
       conditions.push({ type: 'sell order', status: rollerStatusMatch(status) });
     } else if (req.user.role === 'crm') {
-      conditions.push({ type: 'sell order', status: crmStatusMatch(status) });
+      conditions.push(crmVisibleQuery(status));
     } else if (status) {
       // One status, or a comma-separated set ("rolled,billed,delivered")
       const statuses = String(status).split(',').map((s) => s.trim()).filter(Boolean);
@@ -1707,15 +1719,18 @@ exports.rejectCancellation = async (req, res) => {
 // Get dashboard stats (Admin and accounts manager)
 exports.getDashboardStats = async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const pendingOrders = await Order.countDocuments({ status: 'pending' });
-    const toRollOrders = await Order.countDocuments({ status: 'to roll' });
-    const rolledOrders = await Order.countDocuments({ status: 'rolled' });
-    const billedOrders = await Order.countDocuments({ status: 'billed' });
-    const deliveredOrders = await Order.countDocuments({ status: 'delivered' });
-    const completedOrders = await Order.countDocuments({ status: 'completed' });
-    const cancellationRequestedOrders = await Order.countDocuments({ status: 'cancellation_requested' });
-    const cancelledOrders = await Order.countDocuments({ status: 'cancelled' });
+    // Optional ?type= narrows the order counts to one order type, so a list
+    // filtered by type can show tab counts that match it
+    const typeScope = ORDER_TYPES.includes(req.query.type) ? { type: req.query.type } : {};
+    const totalOrders = await Order.countDocuments(typeScope);
+    const pendingOrders = await Order.countDocuments({ ...typeScope, status: 'pending' });
+    const toRollOrders = await Order.countDocuments({ ...typeScope, status: 'to roll' });
+    const rolledOrders = await Order.countDocuments({ ...typeScope, status: 'rolled' });
+    const billedOrders = await Order.countDocuments({ ...typeScope, status: 'billed' });
+    const deliveredOrders = await Order.countDocuments({ ...typeScope, status: 'delivered' });
+    const completedOrders = await Order.countDocuments({ ...typeScope, status: 'completed' });
+    const cancellationRequestedOrders = await Order.countDocuments({ ...typeScope, status: 'cancellation_requested' });
+    const cancelledOrders = await Order.countDocuments({ ...typeScope, status: 'cancelled' });
     
     const totalSalesmen = await Salesman.countDocuments();
     const totalCustomers = await Customer.countDocuments();

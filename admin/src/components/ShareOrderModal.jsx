@@ -1,13 +1,15 @@
 import React, { useRef, useState } from 'react';
-import { X, Copy, Download, Share2 } from 'lucide-react';
+import { X, Copy, Download, Share2, FileText } from 'lucide-react';
 import { STATUS_COLORS } from '../utils/orderStatus';
 import { captureOrderImage as captureCard } from '../utils/orderImage';
+import { downloadOrderPdf } from '../utils/orderPdf';
 import OrderShareCard from './OrderShareCard';
 
 const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
   const modalRef = useRef(null);
   const [copying, setCopying] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   if (!isOpen || !order) return null;
 
@@ -63,6 +65,20 @@ const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
       showAlert('Error', `Failed to generate image: ${error.message}`, 'error');
     } finally {
       setDownloading(false);
+    }
+  };
+
+  // Handle download PDF - A5 pages that stay readable however long the order is
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      await downloadOrderPdf(order);
+      showAlert('Success', 'Order PDF downloaded', 'success');
+    } catch (error) {
+      console.error('PDF download error:', error);
+      showAlert('Error', `Failed to generate PDF: ${error.message}`, 'error');
+    } finally {
+      setDownloadingPdf(false);
     }
   };
 
@@ -155,6 +171,16 @@ const ShareOrderModal = ({ isOpen, onClose, order, showAlert }) => {
           >
             <Download className="w-4 h-4" />
             {downloading ? 'Downloading...' : 'Download Image'}
+          </button>
+
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="srf-btn srf-btn-secondary flex items-center gap-2"
+            aria-label="Download order details as A5 PDF"
+          >
+            <FileText className="w-4 h-4" />
+            {downloadingPdf ? 'Downloading...' : 'Download PDF'}
           </button>
 
           {isWebShareSupported && (

@@ -7,12 +7,17 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
 import { ITEM_SORT_OPTIONS } from '../utils/sortOptions';
-import { PERIOD_UNITS, ruleText } from '../utils/reorderRules';
 import {
-  Search, X, Edit2, SlidersHorizontal, Layers, ClipboardList, ArrowRight, Eraser, Gauge
+  PERIOD_UNITS, ruleText, unitLabel, hasPeriod, periodWindow, dayCount, formatDay, formatRange, toDayString
+} from '../utils/reorderRules';
+import PeriodCalendar from '../components/PeriodCalendar';
+import {
+  Search, X, Edit2, SlidersHorizontal, Layers, ClipboardList, ArrowRight, Eraser, Gauge, CalendarDays
 } from 'lucide-react';
 
-const blankRule = () => ({ quantity: '', periodValue: '', periodUnit: 'months', criteria: 'higher' });
+const blankRule = () => ({
+  quantity: '', periodValue: '', periodUnit: 'months', periodMode: 'rolling', periodFrom: '', periodTo: '', criteria: 'higher'
+});
 
 const ruleToForm = (rule) =>
   rule
@@ -20,17 +25,40 @@ const ruleToForm = (rule) =>
         quantity: rule.quantity ?? '',
         periodValue: rule.periodValue ?? '',
         periodUnit: rule.periodUnit || 'months',
+        periodMode: rule.periodMode || 'rolling',
+        periodFrom: rule.periodFrom || '',
+        periodTo: rule.periodTo || '',
         criteria: rule.criteria || 'higher'
       }
     : blankRule();
 
-const ruleIsBlank = (form) => form.quantity === '' && form.periodValue === '';
+const ruleIsBlank = (form) => form.quantity === '' && !hasPeriod(form);
 
 // One rule's inputs, laid out like Tally's "setreorderitem" row:
 // Quantity | or consumption for the last N Units | Criteria
+// — with a calendar underneath showing exactly which days the period counts
 const RuleFields = ({ title, hint, quantityLabel, value, onChange }) => {
   const set = (patch) => onChange({ ...value, ...patch });
-  const both = value.quantity !== '' && value.periodValue !== '';
+  // Opened by hand when there is no period yet, to pick custom dates
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
+  const periodOn = hasPeriod(value);
+  const custom = value.periodMode === 'custom';
+  const both = value.quantity !== '' && periodOn;
+  const window = periodOn ? periodWindow(value) : null;
+  const n = Number(value.periodValue) || 0;
+  const unitWord = unitLabel(value.periodUnit, n || 2).toLowerCase();
+  const oneUnit = unitLabel(value.periodUnit, 1).toLowerCase();
+
+  const pickCustom = (from, to) =>
+    set({ periodMode: 'custom', periodFrom: toDayString(from), periodTo: toDayString(to) });
+  const leaveCustom = () => set({ periodMode: 'rolling', periodFrom: '', periodTo: '' });
+
+  const modeHint = custom
+    ? 'Fixed dates — this period does not move forward with time.'
+    : value.periodMode === 'calendar'
+    ? `The ${n} whole ${unitWord} before this ${oneUnit}; nothing from the current ${oneUnit}.`
+    : `From the same day ${n} ${unitWord} back, including this ${oneUnit} so far.`;
 
   return (
     <fieldset className="rounded-xl border border-slate-200 p-3.5">
@@ -60,13 +88,15 @@ const RuleFields = ({ title, hint, quantityLabel, value, onChange }) => {
               step="1"
               value={value.periodValue}
               onChange={(e) => set({ periodValue: e.target.value })}
-              className="w-full min-w-0"
+              disabled={custom}
+              className="w-full min-w-0 disabled:bg-slate-50 disabled:text-slate-400"
               placeholder="e.g. 2"
             />
             <select
               value={value.periodUnit}
               onChange={(e) => set({ periodUnit: e.target.value })}
-              className="shrink-0"
+              disabled={custom}
+              className="shrink-0 disabled:bg-slate-50 disabled:text-slate-400"
             >
               {PERIOD_UNITS.map((u) => (
                 <option key={u.value} value={u.value}>{u.label}</option>
@@ -75,6 +105,66 @@ const RuleFields = ({ title, hint, quantityLabel, value, onChange }) => {
           </div>
         </div>
       </div>
+
+      {/* The period, spelled out and drawn */}
+      {periodOn || calendarOpen ? (
+        <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {custom ? (
+              <>
+                <span className="srf-badge bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                  <CalendarDays className="h-3 w-3" />
+                  Custom period
+                </span>
+                <button type="button" onClick={leaveCustom} className="ml-1 text-[11px] font-semibold text-indigo-600 hover:underline">
+                  {n ? `Use the last ${n} ${unitWord} instead` : 'Remove custom period'}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="mr-1 text-[11px] font-semibold text-slate-500">Count</span>
+                <button
+                  type="button"
+                  onClick={() => set({ periodMode: 'rolling' })}
+                  className={`srf-chip !py-1 ${value.periodMode !== 'calendar' ? 'srf-chip-active' : ''}`}
+                >
+                  Up to today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => set({ periodMode: 'calendar' })}
+                  className={`srf-chip !py-1 ${value.periodMode === 'calendar' ? 'srf-chip-active' : ''}`}
+                >
+                  Whole {unitWord}
+                </button>
+              </>
+            )}
+          </div>
+
+          {window ? (
+            <p className="mt-2 text-[12px] text-slate-700">
+              Counts sales from <span className="font-semibold text-slate-900">{formatDay(window.from)}</span> to{' '}
+              <span className="font-semibold text-slate-900">{formatDay(window.to)}</span>
+              <span className="text-slate-400"> · {dayCount(window)} days · {modeHint}</span>
+            </p>
+          ) : (
+            <p className="mt-2 text-[12px] text-slate-500">Enter a period above, or pick the first and last day below.</p>
+          )}
+
+          <div className="mt-3">
+            <PeriodCalendar range={window} onPick={pickCustom} />
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setCalendarOpen(true)}
+          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:underline"
+        >
+          <CalendarDays className="h-3.5 w-3.5" />
+          Pick the period on a calendar
+        </button>
+      )}
 
       <div className={`mt-3 flex items-center gap-2 transition-opacity ${both ? '' : 'opacity-50'}`}>
         <span className="text-xs font-semibold text-slate-600">Criteria</span>
@@ -130,7 +220,7 @@ const RuleModal = ({ title, subtitle, initial, bulkCount, onClose, onSave }) => 
 
   return (
     <div className="srf-modal-backdrop" onClick={onClose}>
-      <div className="srf-modal-panel max-w-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="srf-modal-panel max-w-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="srf-modal-header">
           <div className="min-w-0">
             <h3 className="srf-modal-title">{title}</h3>
@@ -301,7 +391,7 @@ const ReorderLevels = () => {
           <span className="text-[10px] uppercase tracking-wide text-slate-400" title="No reorder rule — using the check level">check</span>
         )}
         {row.levelConsumption != null && (
-          <span className="text-[11px] text-slate-400" title="Consumption in the rule's period">· used {row.levelConsumption}</span>
+          <span className="text-[11px] text-slate-400" title={`Consumed ${formatRange(row.levelWindow)}`}>· used {row.levelConsumption}</span>
         )}
       </span>
     );
