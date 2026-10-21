@@ -9,6 +9,7 @@ const { parseCheckLevel, categoryCheckLevels, decorateCheckLevel, belowCheckLeve
 const {
   findDuplicate, itemDuplicateQuery, itemDuplicateKey, itemIdentityUnchanged, itemDuplicateMessage
 } = require('../utils/duplicateCheck');
+const { allowedCategoryNames } = require('../utils/permissions');
 
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -237,9 +238,16 @@ exports.updateItem = async (req, res) => {
 // Get all items (salesman / roller access)
 exports.getItemsForSalesman = async (req, res) => {
   try {
-    const { search, category, sort, page = 1, limit = 10 } = req.query;
+    const { search, category, customer, sort, page = 1, limit = 10 } = req.query;
 
     const conditions = [];
+
+    // A salesman sees only the categories they may sell — and, with
+    // ?customer=, only those that may also be sold to that customer
+    if (req.user.role === 'salesman') {
+      const allowed = await allowedCategoryNames({ salesmanId: req.user.id, customerId: customer });
+      if (allowed) conditions.push({ category: { $in: allowed } });
+    }
 
     if (search) {
       conditions.push({
@@ -287,7 +295,12 @@ exports.getItemsForSalesman = async (req, res) => {
 // Get single item by ID (salesman access)
 exports.getItemByIdForSalesman = async (req, res) => {
   try {
-    const item = await Item.findById(req.params.id).select('name price quantity');
+    let item = await Item.findById(req.params.id).select('name price quantity category');
+
+    if (item && req.user.role === 'salesman') {
+      const allowed = await allowedCategoryNames({ salesmanId: req.user.id });
+      if (allowed && !allowed.includes(item.category || '')) item = null;
+    }
 
     if (!item) {
       return res.status(404).json({

@@ -8,8 +8,15 @@ import { orderTotal, formatMoney, itemsSummary } from '../../utils/orderMath';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
 import { ShoppingCart, ArrowUpRight, ArrowRight, Send, Receipt, CheckCircle2, ShieldCheck } from 'lucide-react';
 
-const ordersLink = (status) =>
-  `/accounts/orders${status ? `?status=${encodeURIComponent(status)}` : ''}`;
+// The orders list opens on sell orders; `type` opens it on another type, or
+// on every type with 'all'
+const ordersLink = (status, type) => {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (type) params.set('type', type);
+  const query = params.toString();
+  return `/accounts/orders${query ? `?${query}` : ''}`;
+};
 
 // Left-to-right life of a sell order, as the accounts desk sees it
 const PIPELINE = [
@@ -20,9 +27,10 @@ const PIPELINE = [
   { status: 'delivered', countKey: 'delivered' }
 ];
 
-// Statuses outside that flow
+// Statuses outside that flow. Completed only happens to purchase and return
+// orders, so that tile counts and opens every type.
 const OTHER = [
-  { status: 'completed', countKey: 'completed', hint: 'Purchase orders received' },
+  { status: 'completed', countKey: 'completed', hint: 'Purchase orders received', allTypes: true },
   { status: 'cancellation_requested', countKey: 'cancellationRequested', hint: 'Waiting for a decision' },
   { status: 'cancelled', countKey: 'cancelled', hint: 'Approved cancellations' }
 ];
@@ -67,12 +75,15 @@ const AccountsDashboard = () => {
   }
 
   const c = counts || {};
+  // Tiles open the sell-order list, so they count sell orders
+  const sell = c.sell || {};
+  const tileCount = (s) => (s.allTypes ? c[s.countKey] : sell[s.countKey]) || 0;
   const total = c.total || 0;
 
   const queue = [
     {
       title: 'Send to roll',
-      count: c.pending || 0,
+      count: sell.pending || 0,
       text: 'Pending orders waiting to join the rolling queue.',
       status: 'pending',
       icon: Send,
@@ -81,7 +92,7 @@ const AccountsDashboard = () => {
     },
     {
       title: 'Mark billed',
-      count: c.rolled || 0,
+      count: sell.rolled || 0,
       text: 'Rolled orders waiting for their bill.',
       status: 'rolled',
       icon: Receipt,
@@ -90,7 +101,7 @@ const AccountsDashboard = () => {
     },
     {
       title: 'Approve cancellations',
-      count: c.cancellationRequested || 0,
+      count: sell.cancellationRequested || 0,
       text: 'Cancellation requests waiting for your approval.',
       status: 'cancellation_requested',
       icon: CheckCircle2,
@@ -100,8 +111,9 @@ const AccountsDashboard = () => {
   ];
 
   const segments = [...PIPELINE, ...OTHER]
-    .map((s) => ({ ...s, value: c[s.countKey] || 0 }))
+    .map((s) => ({ ...s, value: tileCount(s) }))
     .filter((s) => s.value > 0);
+  const segmentTotal = segments.reduce((sum, s) => sum + s.value, 0);
 
   const today = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -168,7 +180,7 @@ const AccountsDashboard = () => {
             <div
               key={s.status}
               className="h-full"
-              style={{ width: `${(s.value / total) * 100}%`, backgroundColor: STATUS_COLORS[s.status] }}
+              style={{ width: `${(s.value / segmentTotal) * 100}%`, backgroundColor: STATUS_COLORS[s.status] }}
               title={`${STATUS_LABELS[s.status]}: ${s.value}`}
             />
           ))}
@@ -187,7 +199,7 @@ const AccountsDashboard = () => {
                 style={{ backgroundColor: STATUS_COLORS[s.status] }}
               />
               <p className="mt-1 font-display text-xl font-bold leading-none tabular-nums text-slate-900">
-                {c[s.countKey] || 0}
+                {tileCount(s)}
               </p>
               <p className="mt-1 text-[11px] font-medium text-slate-500">{STATUS_LABELS[s.status]}</p>
               {idx < PIPELINE.length - 1 && (
@@ -202,7 +214,7 @@ const AccountsDashboard = () => {
           {OTHER.map((s) => (
             <Link
               key={s.status}
-              to={ordersLink(s.status)}
+              to={ordersLink(s.status, s.allTypes ? 'all' : '')}
               className="flex items-center gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50/60 px-3 py-2.5 transition-colors hover:bg-slate-50"
             >
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: STATUS_COLORS[s.status] }} />
@@ -210,7 +222,7 @@ const AccountsDashboard = () => {
                 <p className="truncate text-[12px] font-semibold text-slate-800">{STATUS_LABELS[s.status]}</p>
                 <p className="hidden truncate text-[10.5px] text-slate-400 sm:block">{s.hint}</p>
               </div>
-              <span className="font-display text-sm font-bold tabular-nums text-slate-900">{c[s.countKey] || 0}</span>
+              <span className="font-display text-sm font-bold tabular-nums text-slate-900">{tileCount(s)}</span>
             </Link>
           ))}
         </div>
@@ -236,7 +248,7 @@ const AccountsDashboard = () => {
               recentOrders.map((order) => (
                 <Link
                   key={order._id}
-                  to={ordersLink(order.status)}
+                  to={ordersLink(order.status, order.type)}
                   className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-50/70 sm:px-5"
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">

@@ -12,8 +12,9 @@ import OrderTable from '../components/OrderTable';
 import OrderCard from '../components/OrderCard';
 import ReturnOrderPicker from '../components/ReturnOrderPicker';
 import CompleteReturnModal from '../components/CompleteReturnModal';
+import FilterPanel from '../components/FilterPanel';
 import { canReturn, loadReturnDraft, lineQty } from '../utils/returnDraft';
-import { TYPE_STYLES, typeStyle } from '../utils/orderType';
+import { TYPE_STYLES, typeStyle, DEFAULT_ORDER_TYPE, typeFromParams } from '../utils/orderType';
 import { orderTotal, orderQty } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Download, RefreshCw, RotateCcw, Share2,
@@ -46,10 +47,11 @@ const Orders = () => {
   const [vendors, setVendors] = useState([]);
   const [items, setItems] = useState([]);
   const [cargo, setCargo] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState(() => typeFromParams(searchParams));
   const [cargoFilter, setCargoFilter] = useState('');
   // Set from an item's detail view ("View all orders") — every year by default
   const [itemFilter, setItemFilter] = useState(searchParams.get('item') || '');
@@ -162,17 +164,19 @@ const Orders = () => {
 
   const fetchRelatedData = async () => {
     try {
-      const [customersRes, vendorsRes, itemsRes, cargoRes] = await Promise.all([
+      const [customersRes, vendorsRes, itemsRes, cargoRes, categoriesRes] = await Promise.all([
         api.get('/customers', { params: { limit: 1000 } }),
         api.get('/vendors', { params: { limit: 1000 } }),
         fetchAll('/items'),
-        api.get('/cargo', { params: { limit: 500 } })
+        api.get('/cargo', { params: { limit: 500 } }),
+        api.get('/categories')
       ]);
 
       if (customersRes.data.success) setCustomers(customersRes.data.data);
       if (vendorsRes.data.success) setVendors(vendorsRes.data.data);
       setItems(itemsRes);
       if (cargoRes.data.success) setCargo(cargoRes.data.data);
+      if (categoriesRes.data.success) setCategories(categoriesRes.data.data);
     } catch (error) {
       console.error('Error fetching related data:', error);
     }
@@ -184,6 +188,16 @@ const Orders = () => {
   };
 
   const isReturnForm = formData.type === 'return order' && !selectedOrder;
+
+  // A sell order offers only the item categories open to its customer (see
+  // the customer's permissions) — null when nothing narrows them
+  const formCustomer = formData.type === 'sell order' ? customers.find((c) => c._id === formData.customerName) : null;
+  const allowedCategoryNames = formCustomer?.allowedCategories
+    ? categories.filter((c) => formCustomer.allowedCategories.includes(c._id)).map((c) => c.name)
+    : null;
+  const pickableItems = allowedCategoryNames
+    ? items.filter((item) => allowedCategoryNames.includes(item.category || ''))
+    : items;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -623,129 +637,131 @@ const Orders = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
-          <div className="relative w-full lg:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by customer or order ID…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full !pl-9"
-            />
+      <FilterPanel active={[searchTerm, statusFilter, typeFilter !== DEFAULT_ORDER_TYPE, cargoFilter, itemFilter, monthFilter, todayOnly]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
+            <div className="relative w-full lg:max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by customer or order ID…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full !pl-9"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:ml-auto lg:flex">
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="to roll">To Roll</option>
+                <option value="rolled">Rolled</option>
+                <option value="billed">Billed</option>
+                <option value="delivered">Delivered</option>
+                <option value="completed">Completed</option>
+                <option value="cancellation_requested">Cancel Requested</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+
+              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                <option value="">All types</option>
+                <option value="sell order">Sell Order</option>
+                <option value="purchase order">Purchase Order</option>
+                <option value="return order">Return Order</option>
+              </select>
+
+              <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
+                <option value="">All cargos</option>
+                {cargo.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+              </select>
+
+              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly || !yearFilter}>
+                <option value="">All months</option>
+                {MONTHS.map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </select>
+
+              <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} disabled={todayOnly}>
+                <option value="">All years</option>
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="col-span-2 sm:col-span-1">
+                {SORT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:ml-auto lg:flex">
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="to roll">To Roll</option>
-              <option value="rolled">Rolled</option>
-              <option value="billed">Billed</option>
-              <option value="delivered">Delivered</option>
-              <option value="completed">Completed</option>
-              <option value="cancellation_requested">Cancel Requested</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-              <option value="">All types</option>
-              <option value="sell order">Sell Order</option>
-              <option value="purchase order">Purchase Order</option>
-              <option value="return order">Return Order</option>
-            </select>
-
-            <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
-              <option value="">All cargos</option>
-              {cargo.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-            </select>
-
-            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly || !yearFilter}>
-              <option value="">All months</option>
-              {MONTHS.map((m, i) => (
-                <option key={m} value={i + 1}>{m}</option>
-              ))}
-            </select>
-
-            <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} disabled={todayOnly}>
-              <option value="">All years</option>
-              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
-
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="col-span-2 sm:col-span-1">
-              {SORT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Quick filters */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setTodayOnly((v) => !v)}
-            className={`srf-chip ${todayOnly ? 'srf-chip-active' : ''}`}
-          >
-            <CalendarDays className="h-3 w-3" />
-            Today's orders
-          </button>
-
-          {itemFilter && (
+          {/* Quick filters */}
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setItemFilter('')}
-              className="srf-chip srf-chip-active max-w-full"
-              title="Show orders for every item"
+              onClick={() => setTodayOnly((v) => !v)}
+              className={`srf-chip ${todayOnly ? 'srf-chip-active' : ''}`}
             >
-              <Package className="h-3 w-3 shrink-0" />
-              <span className="truncate">{items.find((i) => i._id === itemFilter)?.name || 'Selected item'}</span>
-              <X className="h-3 w-3 shrink-0" />
+              <CalendarDays className="h-3 w-3" />
+              Today's orders
             </button>
-          )}
 
-          {(searchTerm || statusFilter || typeFilter || cargoFilter || itemFilter || monthFilter || todayOnly) && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchTerm('');
-                setStatusFilter('');
-                setTypeFilter('');
-                setCargoFilter('');
-                setItemFilter('');
-                setMonthFilter('');
-                setTodayOnly(false);
-                setSortBy('newest');
-              }}
-              className="srf-chip text-slate-400"
-            >
-              <X className="h-3 w-3" />
-              Clear filters
-            </button>
-          )}
-
-          {/* Row colour legend — doubles as a type filter */}
-          <div className="ml-auto flex items-center gap-3">
-            {Object.entries(TYPE_STYLES).map(([type, style]) => (
+            {itemFilter && (
               <button
-                key={type}
                 type="button"
-                onClick={() => setTypeFilter(typeFilter === type ? '' : type)}
-                className={`flex items-center gap-1.5 text-[11px] font-medium transition-colors ${
-                  typeFilter === type ? 'text-slate-800' : 'text-slate-500 hover:text-slate-700'
-                }`}
-                title={`Show only ${style.label.toLowerCase()}s`}
+                onClick={() => setItemFilter('')}
+                className="srf-chip srf-chip-active max-w-full"
+                title="Show orders for every item"
               >
-                <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
-                {style.label}
+                <Package className="h-3 w-3 shrink-0" />
+                <span className="truncate">{items.find((i) => i._id === itemFilter)?.name || 'Selected item'}</span>
+                <X className="h-3 w-3 shrink-0" />
               </button>
-            ))}
+            )}
+
+            {(searchTerm || statusFilter || typeFilter !== DEFAULT_ORDER_TYPE || cargoFilter || itemFilter || monthFilter || todayOnly) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setStatusFilter('');
+                  setTypeFilter(DEFAULT_ORDER_TYPE);
+                  setCargoFilter('');
+                  setItemFilter('');
+                  setMonthFilter('');
+                  setTodayOnly(false);
+                  setSortBy('newest');
+                }}
+                className="srf-chip text-slate-400"
+              >
+                <X className="h-3 w-3" />
+                Clear filters
+              </button>
+            )}
+
+            {/* Row colour legend — doubles as a type filter */}
+            <div className="ml-auto flex items-center gap-3">
+              {Object.entries(TYPE_STYLES).map(([type, style]) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setTypeFilter(typeFilter === type ? '' : type)}
+                  className={`flex items-center gap-1.5 text-[11px] font-medium transition-colors ${
+                    typeFilter === type ? 'text-slate-800' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                  title={`Show only ${style.label.toLowerCase()}s`}
+                >
+                  <span className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
+                  {style.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">
@@ -882,6 +898,11 @@ const Orders = () => {
               ) : (
               <div>
                 <label className="mb-1.5 block">Items</label>
+                {allowedCategoryNames && (
+                  <p className="-mt-0.5 mb-1.5 text-[11px] text-slate-500">
+                    This customer can only be sold {allowedCategoryNames.length ? allowedCategoryNames.join(', ') : 'nothing — no category is permitted'}.
+                  </p>
+                )}
                 <div className="space-y-2">
                   {/* Searchable Add Item Dropdown */}
                   <div className="relative" ref={itemDropdownRef}>
@@ -907,7 +928,7 @@ const Orders = () => {
                     </div>
                     {showItemDropdown && (
                       <div className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg scrollbar-thin">
-                        {items
+                        {pickableItems
                           .filter(item =>
                             !selectedItems.some(si => si.itemId === item._id) &&
                             (itemSearch === '' || item.name.toLowerCase().includes(itemSearch.toLowerCase()))
@@ -930,7 +951,7 @@ const Orders = () => {
                             </button>
                           ))
                         }
-                        {items.filter(item =>
+                        {pickableItems.filter(item =>
                           !selectedItems.some(si => si.itemId === item._id) &&
                           (itemSearch === '' || item.name.toLowerCase().includes(itemSearch.toLowerCase()))
                         ).length === 0 && (

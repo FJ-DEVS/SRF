@@ -19,6 +19,7 @@ router.post('/', authMiddleware, customerController.createCustomer);
 router.get('/', authMiddleware, customerController.getAllCustomers);
 router.get('/:id', authMiddleware, customerController.getCustomer);
 router.put('/:id', authMiddleware, customerController.updateCustomer);
+router.put('/:id/permissions', authMiddleware, customerController.updateCustomerPermissions);
 router.delete('/:id', authMiddleware, customerController.deleteCustomer);
 
 module.exports = router;

@@ -11,6 +11,7 @@ import {
   PERIOD_UNITS, ruleText, unitLabel, hasPeriod, periodWindow, dayCount, formatDay, formatRange, toDayString
 } from '../utils/reorderRules';
 import PeriodCalendar from '../components/PeriodCalendar';
+import FilterPanel from '../components/FilterPanel';
 import {
   Search, X, Edit2, SlidersHorizontal, Layers, ClipboardList, ArrowRight, Eraser, Gauge, CalendarDays
 } from 'lucide-react';
@@ -248,7 +249,7 @@ const RuleModal = ({ title, subtitle, initial, bulkCount, onClose, onSave }) => 
           />
           <p className="text-[11px] leading-relaxed text-slate-400">
             Consumption counts pieces sold less pieces returned in the period, up to today.
-            Leave both sides blank to drop the rule — the item then falls back to its check level.
+            Leave both sides blank to drop the rule — the item is then no longer reordered.
           </p>
         </form>
 
@@ -387,9 +388,6 @@ const ReorderLevels = () => {
     return (
       <span className="inline-flex items-center gap-1 tabular-nums">
         <span className="font-semibold text-slate-900">{row.reorderLevel}</span>
-        {row.levelSource === 'checkLevel' && (
-          <span className="text-[10px] uppercase tracking-wide text-slate-400" title="No reorder rule — using the check level">check</span>
-        )}
         {row.levelConsumption != null && (
           <span className="text-[11px] text-slate-400" title={`Consumed ${formatRange(row.levelWindow)}`}>· used {row.levelConsumption}</span>
         )}
@@ -422,59 +420,61 @@ const ReorderLevels = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by item name…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full !pl-9"
-            />
+      <FilterPanel active={[searchTerm, categoryFilter, configured]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by item name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full !pl-9"
+              />
+            </div>
+            <SortSelect value={sortBy} onChange={setSortBy} options={ITEM_SORT_OPTIONS} className="w-full sm:ml-auto sm:w-auto" />
           </div>
-          <SortSelect value={sortBy} onChange={setSortBy} options={ITEM_SORT_OPTIONS} className="w-full sm:ml-auto sm:w-auto" />
-        </div>
 
-        <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
-          <button type="button" onClick={() => setCategoryFilter('')} className={`srf-chip ${categoryFilter === '' ? 'srf-chip-active' : ''}`}>
-            All
-          </button>
-          {categories.map((cat) => (
-            <button
-              key={cat._id}
-              type="button"
-              onClick={() => setCategoryFilter(categoryFilter === cat.name ? '' : cat.name)}
-              className={`srf-chip ${categoryFilter === cat.name ? 'srf-chip-active' : ''}`}
-            >
-              {cat.name}
+          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
+            <button type="button" onClick={() => setCategoryFilter('')} className={`srf-chip ${categoryFilter === '' ? 'srf-chip-active' : ''}`}>
+              All
             </button>
-          ))}
-        </div>
+            {categories.map((cat) => (
+              <button
+                key={cat._id}
+                type="button"
+                onClick={() => setCategoryFilter(categoryFilter === cat.name ? '' : cat.name)}
+                className={`srf-chip ${categoryFilter === cat.name ? 'srf-chip-active' : ''}`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setConfigured(configured === 'yes' ? '' : 'yes')}
-            className={`srf-chip ${configured === 'yes' ? 'srf-chip-active' : 'text-indigo-700'}`}
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            With a rule
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfigured(configured === 'no' ? '' : 'no')}
-            className={`srf-chip ${configured === 'no' ? 'srf-chip-active' : 'text-amber-700'}`}
-          >
-            <Gauge className="h-3 w-3" />
-            Without a rule
-          </button>
-          <span className="ml-auto text-[11px] text-slate-400">
-            <span className="font-semibold text-slate-700 tabular-nums">{summary.configuredTotal}</span> item{summary.configuredTotal === 1 ? '' : 's'} with a rule
-          </span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setConfigured(configured === 'yes' ? '' : 'yes')}
+              className={`srf-chip ${configured === 'yes' ? 'srf-chip-active' : 'text-indigo-700'}`}
+            >
+              <SlidersHorizontal className="h-3 w-3" />
+              With a rule
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfigured(configured === 'no' ? '' : 'no')}
+              className={`srf-chip ${configured === 'no' ? 'srf-chip-active' : 'text-amber-700'}`}
+            >
+              <Gauge className="h-3 w-3" />
+              Without a rule
+            </button>
+            <span className="ml-auto text-[11px] text-slate-400">
+              <span className="font-semibold text-slate-700 tabular-nums">{summary.configuredTotal}</span> item{summary.configuredTotal === 1 ? '' : 's'} with a rule
+            </span>
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

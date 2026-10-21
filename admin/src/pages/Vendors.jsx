@@ -6,6 +6,7 @@ import DetailModal from '../components/DetailModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
 import { DEFAULT_SORT } from '../utils/sortOptions';
 import { Search, Plus, Edit2, Trash2, X, Eye, Building2, Phone } from 'lucide-react';
 
@@ -178,26 +179,28 @@ const Vendors = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar sm:flex-row sm:items-center">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, phone or GSTIN…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
+      <FilterPanel active={[searchTerm, filterBlocked]}>
+        <div className="srf-toolbar sm:flex-row sm:items-center">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, phone or GSTIN…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 sm:ml-auto sm:flex">
+            <select value={filterBlocked} onChange={(e) => setFilterBlocked(e.target.value)}>
+              <option value="">All vendors</option>
+              <option value="false">Active only</option>
+              <option value="true">Blocked only</option>
+            </select>
+            <SortSelect value={sortBy} onChange={setSortBy} />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-2.5 sm:ml-auto sm:flex">
-          <select value={filterBlocked} onChange={(e) => setFilterBlocked(e.target.value)}>
-            <option value="">All vendors</option>
-            <option value="false">Active only</option>
-            <option value="true">Blocked only</option>
-          </select>
-          <SortSelect value={sortBy} onChange={setSortBy} />
-        </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

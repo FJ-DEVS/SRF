@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { fetchAll } from '../utils/api';
 import PageHeader from '../components/PageHeader';
+import FilterPanel from '../components/FilterPanel';
+import SalesmanMonthlySales from '../components/SalesmanMonthlySales';
 import {
   ShoppingCart,
   Package,
@@ -380,7 +382,7 @@ const Consolidation = () => {
   }));
 
   const structureCards = [
-    { label: 'Total Orders', value: structure.orders, icon: ShoppingCart, link: '/orders' },
+    { label: 'Total Orders', value: structure.orders, icon: ShoppingCart, link: '/orders?type=all' },
     { label: 'Items', value: structure.items, icon: Package, link: '/items' },
     { label: 'Customers', value: structure.customers, icon: UserCircle, link: '/customers' },
     { label: 'Vendors', value: structure.vendors, icon: Building2, link: '/vendors' },
@@ -408,95 +410,97 @@ const Consolidation = () => {
       />
 
       {/* Filters — one row, scopes everything below */}
-      <div className="srf-card p-3 sm:p-3.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
-            <Filter className="h-3.5 w-3.5" /> Filters
-          </span>
+      <FilterPanel active={[filters.preset !== DEFAULT_FILTERS.preset, filters.type, filters.status, filters.item, qtyFilter.minQty, qtyFilter.maxQty]}>
+        <div className="srf-card p-3 sm:p-3.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              <Filter className="h-3.5 w-3.5" /> Filters
+            </span>
 
-          <select
-            value={filters.preset}
-            onChange={(e) => setFilters({ ...filters, preset: e.target.value })}
-            className={selectClass}
-          >
-            {PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
+            <select
+              value={filters.preset}
+              onChange={(e) => setFilters({ ...filters, preset: e.target.value })}
+              className={selectClass}
+            >
+              {PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
 
-          {filters.preset === 'custom' && (
-            <>
-              <input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-                className={selectClass}
-              />
-              <span className="text-xs text-slate-400">to</span>
-              <input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-                className={selectClass}
-              />
-            </>
-          )}
+            {filters.preset === 'custom' && (
+              <>
+                <input
+                  type="date"
+                  value={filters.startDate}
+                  onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                  className={selectClass}
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={filters.endDate}
+                  onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                  className={selectClass}
+                />
+              </>
+            )}
 
-          <select
-            value={filters.type}
-            onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-            className={selectClass}
-          >
-            <option value="">All Types</option>
-            <option value="sell order">Sell Order</option>
-            <option value="purchase order">Purchase Order</option>
-            <option value="return order">Return Order</option>
-          </select>
+            <select
+              value={filters.type}
+              onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+              className={selectClass}
+            >
+              <option value="">All Types</option>
+              <option value="sell order">Sell Order</option>
+              <option value="purchase order">Purchase Order</option>
+              <option value="return order">Return Order</option>
+            </select>
 
-          <select
-            value={filters.status}
-            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-            className={selectClass}
-          >
-            <option value="">All Status</option>
-            {STATUS_ORDER.map((s) => (
-              <option key={s} value={s}>{STATUS_META[s].label}</option>
-            ))}
-          </select>
+            <select
+              value={filters.status}
+              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+              className={selectClass}
+            >
+              <option value="">All Status</option>
+              {STATUS_ORDER.map((s) => (
+                <option key={s} value={s}>{STATUS_META[s].label}</option>
+              ))}
+            </select>
 
-          <select
-            value={filters.item}
-            onChange={(e) => setFilters({ ...filters, item: e.target.value })}
-            className={`${selectClass} max-w-[180px]`}
-          >
-            <option value="">All Items</option>
-            {items.map((item) => (
-              <option key={item._id} value={item._id}>{item.name}</option>
-            ))}
-          </select>
+            <select
+              value={filters.item}
+              onChange={(e) => setFilters({ ...filters, item: e.target.value })}
+              className={`${selectClass} max-w-[180px]`}
+            >
+              <option value="">All Items</option>
+              {items.map((item) => (
+                <option key={item._id} value={item._id}>{item.name}</option>
+              ))}
+            </select>
 
-          <input
-            type="number"
-            min="0"
-            placeholder="Min qty"
-            value={qtyDraft.minQty}
-            onChange={(e) => setQtyDraft({ ...qtyDraft, minQty: e.target.value })}
-            className={`${selectClass} w-24`}
-          />
-          <input
-            type="number"
-            min="0"
-            placeholder="Max qty"
-            value={qtyDraft.maxQty}
-            onChange={(e) => setQtyDraft({ ...qtyDraft, maxQty: e.target.value })}
-            className={`${selectClass} w-24`}
-          />
+            <input
+              type="number"
+              min="0"
+              placeholder="Min qty"
+              value={qtyDraft.minQty}
+              onChange={(e) => setQtyDraft({ ...qtyDraft, minQty: e.target.value })}
+              className={`${selectClass} w-24`}
+            />
+            <input
+              type="number"
+              min="0"
+              placeholder="Max qty"
+              value={qtyDraft.maxQty}
+              onChange={(e) => setQtyDraft({ ...qtyDraft, maxQty: e.target.value })}
+              className={`${selectClass} w-24`}
+            />
 
-          <button onClick={resetFilters} className="srf-btn srf-btn-secondary" title="Reset filters">
-            <RotateCcw className="h-3.5 w-3.5" /> Reset
-          </button>
+            <button onClick={resetFilters} className="srf-btn srf-btn-secondary" title="Reset filters">
+              <RotateCcw className="h-3.5 w-3.5" /> Reset
+            </button>
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* Project structure — unfiltered entity counts */}
       <div>
@@ -520,6 +524,9 @@ const Consolidation = () => {
           })}
         </div>
       </div>
+
+      {/* Salesman × category sales for two months — its own month picker */}
+      <SalesmanMonthlySales />
 
       {/* Everything below re-renders against the filter slice */}
       <div className={`space-y-5 transition-opacity ${refreshing ? 'opacity-60 pointer-events-none' : ''}`}>

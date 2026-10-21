@@ -31,6 +31,7 @@ router.get('/stats', roleAuth('admin', 'accounts'), orderController.getDashboard
 
 // Consolidation report - Admin only
 router.get('/consolidation', authMiddleware, orderController.getConsolidationReport);
+router.get('/consolidation/salesmen', authMiddleware, orderController.getSalesmanMonthlySales);
 
 // Salesman-only list/detail (same controller rules as GET / and GET /:id for role salesman)
 router.get('/salesman/list', salesmanAuthMiddleware, orderController.getAllOrders);

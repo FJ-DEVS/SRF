@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 import PageHeader from '../components/PageHeader';
+import FilterPanel from '../components/FilterPanel';
 import { formatDateTime } from '../utils/orderMath';
 import { Trophy, Medal, Award, Crown, FileSpreadsheet, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -215,31 +216,33 @@ const SchemaLeaderboard = () => {
       </PageHeader>
 
       {/* Schema + salesman filters */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <div className="w-full sm:max-w-sm">
-            <select value={selectedId} onChange={(e) => handleSelect(e.target.value)} className="w-full">
-              <option value="">Select a schema…</option>
-              {schemas.map((s) => (
-                <option key={s._id} value={s._id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="w-full sm:max-w-xs">
-            <select
-              value={selectedSalesman}
-              onChange={(e) => handleSalesmanSelect(e.target.value)}
-              className="w-full"
-              disabled={!selectedId}
-            >
-              <option value="">All salesmen</option>
-              {salesmen.map((s) => (
-                <option key={s._id} value={s._id}>{s.name}</option>
-              ))}
-            </select>
+      <FilterPanel active={[selectedSalesman]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="w-full sm:max-w-sm">
+              <select value={selectedId} onChange={(e) => handleSelect(e.target.value)} className="w-full">
+                <option value="">Select a schema…</option>
+                {schemas.map((s) => (
+                  <option key={s._id} value={s._id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="w-full sm:max-w-xs">
+              <select
+                value={selectedSalesman}
+                onChange={(e) => handleSalesmanSelect(e.target.value)}
+                className="w-full"
+                disabled={!selectedId}
+              >
+                <option value="">All salesmen</option>
+                {salesmen.map((s) => (
+                  <option key={s._id} value={s._id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {result?.schema && (
         <div className="srf-card mb-4 flex flex-wrap items-center justify-between gap-3 p-4">

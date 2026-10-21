@@ -10,7 +10,8 @@ import Pagination from '../../components/Pagination';
 import PageHeader from '../../components/PageHeader';
 import OrderTable from '../../components/OrderTable';
 import OrderCard from '../../components/OrderCard';
-import { typeStyle } from '../../utils/orderType';
+import FilterPanel from '../../components/FilterPanel';
+import { typeStyle, DEFAULT_ORDER_TYPE, typeFromParams } from '../../utils/orderType';
 import useCargoOptions from '../../utils/useCargoOptions';
 import { ITEM_NAME_SORT_OPTIONS } from '../../utils/sortOptions';
 import { STATUS_COLORS, STATUS_LABELS } from '../../utils/orderStatus';
@@ -117,9 +118,9 @@ const AccountsOrders = () => {
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  // Sell orders open first. A dashboard link arrives with a status and counts
-  // across every type, so it lands on all types to match its figure.
-  const [typeFilter, setTypeFilter] = useState(() => (searchParams.get('status') ? '' : 'sell order'));
+  // Sell orders open first, dashboard links included; other types show once
+  // picked, or when a link asks for them with ?type=
+  const [typeFilter, setTypeFilter] = useState(() => typeFromParams(searchParams));
   const [cargoFilter, setCargoFilter] = useState('');
   const cargos = useCargoOptions();
   const [monthFilter, setMonthFilter] = useState('');
@@ -259,12 +260,12 @@ const AccountsOrders = () => {
     </>
   );
 
-  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter !== 'sell order' || cargoFilter || monthFilter || yearFilter || todayOnly);
+  const hasFilters = Boolean(searchTerm || statusFilter || typeFilter !== DEFAULT_ORDER_TYPE || cargoFilter || monthFilter || yearFilter || todayOnly);
 
   const clearFilters = () => {
     setSearchTerm('');
     setStatusFilter('');
-    setTypeFilter('sell order');
+    setTypeFilter(DEFAULT_ORDER_TYPE);
     setCargoFilter('');
     setMonthFilter('');
     setYearFilter('');
@@ -315,76 +316,78 @@ const AccountsOrders = () => {
       </div>
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
-          <div className="relative w-full lg:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by customer or order ID…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full !pl-9"
-            />
+      <FilterPanel active={[searchTerm, typeFilter !== DEFAULT_ORDER_TYPE, cargoFilter, monthFilter, yearFilter, todayOnly]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
+            <div className="relative w-full lg:max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by customer or order ID…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full !pl-9"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5 lg:ml-auto lg:flex">
+              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                <option value="">All types</option>
+                <option value="sell order">Sell Order</option>
+                <option value="purchase order">Purchase Order</option>
+                <option value="return order">Return Order</option>
+              </select>
+
+              <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
+                <option value="">All cargos</option>
+                {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+              </select>
+
+              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>
+                <option value="">All months</option>
+                {MONTHS.map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </select>
+
+              <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} disabled={todayOnly}>
+                <option value="">All years</option>
+                {YEARS.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="col-span-2 sm:col-span-1">
+                {SORT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5 lg:ml-auto lg:flex">
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-              <option value="">All types</option>
-              <option value="sell order">Sell Order</option>
-              <option value="purchase order">Purchase Order</option>
-              <option value="return order">Return Order</option>
-            </select>
-
-            <select value={cargoFilter} onChange={(e) => setCargoFilter(e.target.value)} aria-label="Cargo">
-              <option value="">All cargos</option>
-              {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-            </select>
-
-            <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} disabled={todayOnly}>
-              <option value="">All months</option>
-              {MONTHS.map((m, i) => (
-                <option key={m} value={i + 1}>{m}</option>
-              ))}
-            </select>
-
-            <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} disabled={todayOnly}>
-              <option value="">All years</option>
-              {YEARS.map((year) => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
-
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="col-span-2 sm:col-span-1">
-              {SORT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setTodayOnly((v) => !v)}
-            className={`srf-chip ${todayOnly ? 'srf-chip-active' : ''}`}
-          >
-            <CalendarDays className="h-3 w-3" />
-            Today's orders
-          </button>
-
-          {hasFilters && (
-            <button type="button" onClick={clearFilters} className="srf-chip text-slate-400">
-              <X className="h-3 w-3" />
-              Clear filters
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setTodayOnly((v) => !v)}
+              className={`srf-chip ${todayOnly ? 'srf-chip-active' : ''}`}
+            >
+              <CalendarDays className="h-3 w-3" />
+              Today's orders
             </button>
-          )}
 
-          <span className="ml-auto text-[11px] text-slate-400">
-            {pagination.total} order{pagination.total === 1 ? '' : 's'}
-          </span>
+            {hasFilters && (
+              <button type="button" onClick={clearFilters} className="srf-chip text-slate-400">
+                <X className="h-3 w-3" />
+                Clear filters
+              </button>
+            )}
+
+            <span className="ml-auto text-[11px] text-slate-400">
+              {pagination.total} order{pagination.total === 1 ? '' : 's'}
+            </span>
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

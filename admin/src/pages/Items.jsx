@@ -10,6 +10,7 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
 import { ITEM_SORT_OPTIONS, DEFAULT_SORT } from '../utils/sortOptions';
 import { formatDateTime } from '../utils/orderMath';
 import {
@@ -769,98 +770,100 @@ const Items = () => {
       </div>
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by item name…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full !pl-9"
-            />
-          </div>
-          {view === 'stock' && (
-            <SortSelect
-              value={sortBy}
-              onChange={setSortBy}
-              options={ITEM_SORT_OPTIONS}
-              className="w-full sm:ml-auto sm:w-auto"
-            />
-          )}
-        </div>
-
-        {/* Category chips */}
-        <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
-          <button
-            type="button"
-            onClick={() => setSizeFilter('')}
-            className={`srf-chip ${sizeFilter === '' ? 'srf-chip-active' : ''}`}
-          >
-            All
-          </button>
-          {categories.map((cat) => (
-            <button
-              key={cat._id}
-              type="button"
-              onClick={() => setSizeFilter(sizeFilter === cat.name ? '' : cat.name)}
-              className={`srf-chip ${sizeFilter === cat.name ? 'srf-chip-active' : ''}`}
-              title={cat.checkLevel != null ? `Check level ${cat.checkLevel}` : undefined}
-            >
-              {cat.name}
-            </button>
-          ))}
-        </div>
-
-        {/* Check level chips */}
-        {view === 'stock' && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setStockState(stockState === 'below' ? '' : 'below')}
-            className={`srf-chip ${stockState === 'below' ? 'srf-chip-active' : 'text-amber-700'}`}
-          >
-            <AlertTriangle className="h-3 w-3" />
-            Below check level
-          </button>
-          <button
-            type="button"
-            onClick={() => setStockState(stockState === 'above' ? '' : 'above')}
-            className={`srf-chip ${stockState === 'above' ? 'srf-chip-active' : 'text-emerald-700'}`}
-          >
-            <ShieldCheck className="h-3 w-3" />
-            Above check level
-          </button>
-
-          {/* Reorder tools — act on every item the below-check-level view holds */}
-          {stockState === 'below' && (
-            <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
-              <button
-                type="button"
-                onClick={handleExportBelowPdf}
-                disabled={loading || items.length === 0 || Boolean(reorderLoading)}
-                className="srf-btn srf-btn-secondary !py-1.5 !text-xs"
-                title={`PDF of all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
-              >
-                <FileText className="h-3.5 w-3.5 text-rose-500" />
-                {reorderLoading === 'pdf' ? 'Preparing…' : 'Download PDF'}
-              </button>
-              <button
-                type="button"
-                onClick={handleCreatePurchaseOrder}
-                disabled={loading || items.length === 0 || Boolean(reorderLoading)}
-                className="srf-btn srf-btn-primary !py-1.5 !text-xs"
-                title={`Purchase order for all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
-              >
-                <ShoppingCart className="h-3.5 w-3.5" />
-                {reorderLoading === 'order' ? 'Loading…' : 'Create Purchase Order'}
-              </button>
+      <FilterPanel active={[searchTerm, sizeFilter, stockState]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by item name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full !pl-9"
+              />
             </div>
+            {view === 'stock' && (
+              <SortSelect
+                value={sortBy}
+                onChange={setSortBy}
+                options={ITEM_SORT_OPTIONS}
+                className="w-full sm:ml-auto sm:w-auto"
+              />
+            )}
+          </div>
+
+          {/* Category chips */}
+          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
+            <button
+              type="button"
+              onClick={() => setSizeFilter('')}
+              className={`srf-chip ${sizeFilter === '' ? 'srf-chip-active' : ''}`}
+            >
+              All
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat._id}
+                type="button"
+                onClick={() => setSizeFilter(sizeFilter === cat.name ? '' : cat.name)}
+                className={`srf-chip ${sizeFilter === cat.name ? 'srf-chip-active' : ''}`}
+                title={cat.checkLevel != null ? `Check level ${cat.checkLevel}` : undefined}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Check level chips */}
+          {view === 'stock' && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setStockState(stockState === 'below' ? '' : 'below')}
+              className={`srf-chip ${stockState === 'below' ? 'srf-chip-active' : 'text-amber-700'}`}
+            >
+              <AlertTriangle className="h-3 w-3" />
+              Below check level
+            </button>
+            <button
+              type="button"
+              onClick={() => setStockState(stockState === 'above' ? '' : 'above')}
+              className={`srf-chip ${stockState === 'above' ? 'srf-chip-active' : 'text-emerald-700'}`}
+            >
+              <ShieldCheck className="h-3 w-3" />
+              Above check level
+            </button>
+
+            {/* Reorder tools — act on every item the below-check-level view holds */}
+            {stockState === 'below' && (
+              <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+                <button
+                  type="button"
+                  onClick={handleExportBelowPdf}
+                  disabled={loading || items.length === 0 || Boolean(reorderLoading)}
+                  className="srf-btn srf-btn-secondary !py-1.5 !text-xs"
+                  title={`PDF of all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
+                >
+                  <FileText className="h-3.5 w-3.5 text-rose-500" />
+                  {reorderLoading === 'pdf' ? 'Preparing…' : 'Download PDF'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreatePurchaseOrder}
+                  disabled={loading || items.length === 0 || Boolean(reorderLoading)}
+                  className="srf-btn srf-btn-primary !py-1.5 !text-xs"
+                  title={`Purchase order for all ${pagination.total} item(s) below check level${sizeFilter ? ` in ${sizeFilter}` : ''}`}
+                >
+                  <ShoppingCart className="h-3.5 w-3.5" />
+                  {reorderLoading === 'order' ? 'Loading…' : 'Create Purchase Order'}
+                </button>
+              </div>
+            )}
+          </div>
           )}
         </div>
-        )}
-      </div>
+      </FilterPanel>
 
       {/* List */}
       {view === 'stock' && (

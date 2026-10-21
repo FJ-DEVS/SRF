@@ -28,6 +28,16 @@ const salesmanSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  // Customers this salesman may serve and item categories they may sell.
+  // Unset means every one — see utils/permissions.js.
+  allowedCustomers: {
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Customer' }],
+    default: undefined
+  },
+  allowedCategories: {
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
+    default: undefined
+  },
   createdAt: {
     type: Date,
     default: Date.now

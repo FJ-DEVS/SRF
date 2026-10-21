@@ -63,12 +63,12 @@ const Dashboard = () => {
   }
 
   const kpis = [
-    { title: 'Total Orders', value: stats?.orders?.total || 0, icon: ShoppingCart, tint: 'bg-slate-100 text-slate-600', link: '/orders' },
-    { title: 'Pending', value: stats?.orders?.pending || 0, icon: Clock, tint: 'bg-amber-50 text-amber-600', link: '/orders?status=pending' },
-    { title: 'To Roll', value: stats?.orders?.toRoll || 0, icon: Package, tint: 'bg-sky-50 text-sky-600', link: '/orders?status=to roll' },
-    { title: 'Rolled', value: stats?.orders?.rolled || 0, icon: TrendingUp, tint: 'bg-violet-50 text-violet-600', link: '/orders?status=rolled' },
-    { title: 'Billed', value: stats?.orders?.billed || 0, icon: Receipt, tint: 'bg-orange-50 text-orange-600', link: '/orders?status=billed' },
-    { title: 'Delivered', value: stats?.orders?.delivered || 0, icon: CheckCircle2, tint: 'bg-emerald-50 text-emerald-600', link: '/orders?status=delivered' }
+    { title: 'Total Orders', value: stats?.orders?.total || 0, icon: ShoppingCart, tint: 'bg-slate-100 text-slate-600', link: '/orders?type=all' },
+    { title: 'Pending', value: stats?.orders?.sell?.pending || 0, icon: Clock, tint: 'bg-amber-50 text-amber-600', link: '/orders?status=pending' },
+    { title: 'To Roll', value: stats?.orders?.sell?.toRoll || 0, icon: Package, tint: 'bg-sky-50 text-sky-600', link: '/orders?status=to roll' },
+    { title: 'Rolled', value: stats?.orders?.sell?.rolled || 0, icon: TrendingUp, tint: 'bg-violet-50 text-violet-600', link: '/orders?status=rolled' },
+    { title: 'Billed', value: stats?.orders?.sell?.billed || 0, icon: Receipt, tint: 'bg-orange-50 text-orange-600', link: '/orders?status=billed' },
+    { title: 'Delivered', value: stats?.orders?.sell?.delivered || 0, icon: CheckCircle2, tint: 'bg-emerald-50 text-emerald-600', link: '/orders?status=delivered' }
   ];
 
   const statusData = [

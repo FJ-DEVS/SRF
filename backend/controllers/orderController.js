@@ -7,12 +7,39 @@ const Item = require('../models/Item');
 const DamagedItem = require('../models/DamagedItem');
 const Cargo = require('../models/Cargo');
 const Category = require('../models/Category');
+const Schema = require('../models/Schema');
 const axios = require('axios');
 const { getIO } = require('../socket');
 const Placement = require('../models/Placement');
 const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 const { itemNameKeyStages, ITEM_NAME_SORTS } = require('../utils/itemNameSort');
+const { allowedCustomerIds, allowedCategoryNames, firstForbiddenItem } = require('../utils/permissions');
+
+// Why a sell order's lines may not go out — an item whose category is not
+// open to the customer, or to the salesman placing it. Undefined when every
+// line is allowed.
+const categoryPermissionError = async (lines, { customerId, salesmanId }, session = null) => {
+  const checks = [];
+  if (customerId) checks.push({ names: await allowedCategoryNames({ customerId }), who: 'this customer' });
+  if (salesmanId) checks.push({ names: await allowedCategoryNames({ salesmanId }), who: 'you' });
+  if (checks.every((c) => c.names === null)) return undefined;
+
+  const items = await Item.find({ _id: { $in: lines.map((l) => l.item) } })
+    .select('name category')
+    .session(session)
+    .lean();
+  for (const check of checks) {
+    const bad = firstForbiddenItem(items, check.names);
+    if (bad) {
+      const category = bad.category ? `the ${bad.category} category` : 'no category';
+      return check.who === 'you'
+        ? `"${bad.name}" is in ${category}, which you are not permitted to sell`
+        : `"${bad.name}" is in ${category}, which is not permitted for this customer`;
+    }
+  }
+  return undefined;
+};
 
 // Helper function to send OneSignal notification
 const sendPushNotification = async (message, data = {}) => {
@@ -321,6 +348,27 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    // Permissions: a salesman orders only for the customers they have been
+    // given, and a sell order holds only categories open to its customer and
+    // to the salesman placing it
+    if (type === 'sell order') {
+      const salesmanId = req.user.role === 'salesman' ? req.user.id : null;
+      if (salesmanId) {
+        const allowedCustomers = await allowedCustomerIds(salesmanId);
+        if (allowedCustomers && !allowedCustomers.some((id) => String(id) === String(customerName))) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(403).json({ success: false, message: 'You are not permitted to order for this customer' });
+        }
+      }
+      const permissionError = await categoryPermissionError(items, { customerId: customerName, salesmanId }, session);
+      if (permissionError) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ success: false, message: permissionError });
+      }
+    }
+
     // For sell orders: atomically deduct stock inside the transaction.
     // Using findOneAndUpdate with { quantity: { $gte: requestedQty } } ensures
     // the check-and-deduct is a single atomic operation — no race condition possible.
@@ -585,7 +633,8 @@ exports.getAllOrders = async (req, res) => {
 
     const conditions = [];
 
-    // If salesman, show their own orders OR orders with status "to roll"
+    // If salesman, show their own orders OR orders with status "to roll" —
+    // either way only for the customers they have been given
     if (req.user.role === 'salesman') {
       conditions.push({
         $or: [
@@ -593,6 +642,8 @@ exports.getAllOrders = async (req, res) => {
           { status: 'to roll' }
         ]
       });
+      const allowedCustomers = await allowedCustomerIds(req.user.id);
+      if (allowedCustomers) conditions.push({ customerName: { $in: allowedCustomers } });
     }
 
     // Rollers see sell orders from the moment they are queued for rolling
@@ -793,7 +844,10 @@ exports.getOrder = async (req, res) => {
           : null;
       const isOwn = creatorId === String(req.user.id);
       const isSharedToRoll = order.status === 'to roll';
-      if (!isOwn && !isSharedToRoll) {
+      const allowedCustomers = await allowedCustomerIds(req.user.id);
+      const customerId = String(order.customerName?._id ?? order.customerName);
+      const customerAllowed = !allowedCustomers || allowedCustomers.some((id) => String(id) === customerId);
+      if ((!isOwn && !isSharedToRoll) || !customerAllowed) {
         return res.status(403).json({
           success: false,
           message: 'Access denied'
@@ -1320,7 +1374,7 @@ exports.updateOrder = async (req, res) => {
     }
 
     // Validate the referenced party against the right collection for the order type
-    const existingOrder = await Order.findById(req.params.id).select('type');
+    const existingOrder = await Order.findById(req.params.id).select('type items customerName');
     if (!existingOrder) {
       return res.status(404).json({
         success: false,
@@ -1362,6 +1416,16 @@ exports.updateOrder = async (req, res) => {
             message: 'Vendor not found'
           });
         }
+      }
+    }
+
+    // A sell order may only hold categories open to its customer
+    if (existingOrder.type === 'sell order' && (items !== undefined || customerName !== undefined)) {
+      const permissionError = await categoryPermissionError(items ?? existingOrder.items, {
+        customerId: customerName ?? existingOrder.customerName
+      });
+      if (permissionError) {
+        return res.status(400).json({ success: false, message: permissionError });
       }
     }
 
@@ -1731,6 +1795,25 @@ exports.getDashboardStats = async (req, res) => {
     const completedOrders = await Order.countDocuments({ ...typeScope, status: 'completed' });
     const cancellationRequestedOrders = await Order.countDocuments({ ...typeScope, status: 'cancellation_requested' });
     const cancelledOrders = await Order.countDocuments({ ...typeScope, status: 'cancelled' });
+
+    // The same counts for sell orders alone — order lists open on sell orders,
+    // so a dashboard tile that opens one shows this figure
+    const sellRows = await Order.aggregate([
+      { $match: { type: 'sell order' } },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+    const sellCount = (status) => sellRows.find((r) => r._id === status)?.count || 0;
+    const sellOrders = {
+      total: sellRows.reduce((sum, r) => sum + r.count, 0),
+      pending: sellCount('pending'),
+      toRoll: sellCount('to roll'),
+      rolled: sellCount('rolled'),
+      billed: sellCount('billed'),
+      delivered: sellCount('delivered'),
+      completed: sellCount('completed'),
+      cancellationRequested: sellCount('cancellation_requested'),
+      cancelled: sellCount('cancelled')
+    };
     
     const totalSalesmen = await Salesman.countDocuments();
     const totalCustomers = await Customer.countDocuments();
@@ -1791,7 +1874,8 @@ exports.getDashboardStats = async (req, res) => {
           delivered: deliveredOrders,
           completed: completedOrders,
           cancellationRequested: cancellationRequestedOrders,
-          cancelled: cancelledOrders
+          cancelled: cancelledOrders,
+          sell: sellOrders
         },
         salesmen: totalSalesmen,
         customers: totalCustomers,
@@ -2124,3 +2208,132 @@ exports.getConsolidationReport = async (req, res) => {
   }
 };
 
+// Salesman sales by month — pieces each salesman sold per item category in
+// two consecutive months, and the incentive points those pieces earn.
+// A sale counts in the month its sell order was placed: sell orders not
+// cancelled, less pieces later sent back on completed returns of those
+// orders. Orders not booked by a current salesman (keyed in by the office, or
+// by a salesman since deleted) are summed in one "Others" row.
+// Points are pieces × the category's rate in one schema, applied to both
+// months so they compare — ?schema= picks it; by default the schema running
+// today that ends last. ?month=YYYY-MM picks the later month; last month by
+// default.
+const SALESMAN_REPORT_MONTHS = 2;
+
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+exports.getSalesmanMonthlySales = async (req, res) => {
+  try {
+    const now = new Date();
+    const picked = /^(\d{4})-(\d{2})$/.exec(req.query.month || '');
+    const last = picked
+      ? new Date(Number(picked[1]), Number(picked[2]) - 1, 1)
+      : new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const months = Array.from({ length: SALESMAN_REPORT_MONTHS }, (_, i) => {
+      const start = new Date(last.getFullYear(), last.getMonth() - (SALESMAN_REPORT_MONTHS - 1 - i), 1);
+      return { key: monthKey(start), start, end: new Date(start.getFullYear(), start.getMonth() + 1, 1) };
+    });
+    const rangeStart = months[0].start;
+    const rangeEnd = months[months.length - 1].end;
+
+    const [salesmen, categories, orders, schemas] = await Promise.all([
+      Salesman.find().select('name').sort({ name: 1 }).collation({ locale: 'en', strength: 2 }).lean(),
+      Category.find().select('name').sort({ createdAt: 1, _id: 1 }).lean(),
+      Order.find({
+        type: 'sell order',
+        status: { $nin: ['cancelled', 'cancellation_requested'] },
+        createdAt: { $gte: rangeStart, $lt: rangeEnd }
+      })
+        .select('createdBy createdByType createdAt items')
+        .populate('items.item', 'category')
+        .lean(),
+      Schema.find().select('name fromDate toDate pointsAllocations').sort({ fromDate: -1 }).lean()
+    ]);
+
+    // { sellOrderId -> { itemId -> pieces returned } }
+    const returnedByOrder = new Map();
+    if (orders.length) {
+      const returns = await Order.find({
+        type: 'return order',
+        status: 'completed',
+        returnOf: { $in: orders.map((o) => o._id) }
+      })
+        .select('returnOf items')
+        .lean();
+      for (const ret of returns) {
+        const key = String(ret.returnOf);
+        if (!returnedByOrder.has(key)) returnedByOrder.set(key, new Map());
+        const byItem = returnedByOrder.get(key);
+        for (const line of ret.items) {
+          const itemId = String(line.item);
+          byItem.set(itemId, (byItem.get(itemId) || 0) + (line.quantity || 0));
+        }
+      }
+    }
+
+    // The schema whose rates the points use
+    const running = schemas.filter((sc) => sc.fromDate <= now && now <= sc.toDate);
+    const schema =
+      schemas.find((sc) => String(sc._id) === req.query.schema) ||
+      [...(running.length ? running : schemas)].sort((a, b) => b.toDate - a.toDate)[0] ||
+      null;
+    // Points per piece by category name. A deleted category falls back to
+    // the name the schema kept.
+    const nameById = new Map(categories.map((c) => [String(c._id), c.name]));
+    const rates = new Map(
+      (schema?.pointsAllocations || []).map((a) => [nameById.get(String(a.category)) || a.categoryName, a.points])
+    );
+
+    const blank = () => Object.fromEntries(months.map((m) => [m.key, 0]));
+    const rowsById = new Map(
+      salesmen.map((s) => [String(s._id), { salesmanId: s._id, name: s.name, sales: {}, points: blank() }])
+    );
+    const others = { salesmanId: null, name: 'Others (office / former salesmen)', sales: {}, points: blank() };
+    const soldCategories = new Set();
+
+    for (const order of orders) {
+      const row = (order.createdByType === 'salesman' && rowsById.get(String(order.createdBy))) || others;
+      const key = monthKey(order.createdAt);
+      const returned = returnedByOrder.get(String(order._id));
+      for (const line of order.items) {
+        const itemId = String(line.item?._id ?? line.item);
+        let qty = line.quantity || 0;
+        // Take returned pieces off this line, once
+        const back = Math.min(qty, returned?.get(itemId) || 0);
+        if (back) {
+          qty -= back;
+          returned.set(itemId, returned.get(itemId) - back);
+        }
+        if (qty <= 0) continue;
+        const category = line.item?.category || '';
+        soldCategories.add(category);
+        if (!row.sales[category]) row.sales[category] = blank();
+        row.sales[category][key] += qty;
+        row.points[key] += qty * (rates.get(category) || 0);
+      }
+    }
+
+    // Columns: categories something was sold in, in the order they were
+    // created, then any item category with no category record, then items
+    // with no category at all
+    const known = categories.map((c) => c.name).filter((name) => soldCategories.has(name));
+    const orphans = [...soldCategories].filter((name) => name && !known.includes(name)).sort();
+    const columns = [...known, ...orphans, ...(soldCategories.has('') ? [''] : [])];
+
+    res.status(200).json({
+      success: true,
+      data: {
+        months: months.map((m) => ({ key: m.key, start: m.start })),
+        categories: columns,
+        rows: [...rowsById.values()],
+        // Only when something landed there
+        others: Object.keys(others.sales).length ? others : null,
+        schema: schema && { _id: schema._id, name: schema.name },
+        schemas: schemas.map((sc) => ({ _id: sc._id, name: sc.name, fromDate: sc.fromDate, toDate: sc.toDate }))
+      }
+    });
+  } catch (error) {
+    console.error('Get salesman monthly sales error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};

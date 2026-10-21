@@ -1,6 +1,8 @@
 const Category = require('../models/Category');
 const Item = require('../models/Item');
 const Schema = require('../models/Schema');
+const jwt = require('jsonwebtoken');
+const { allowedCategoryNames } = require('../utils/permissions');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
 
 // Blank / missing check level means "not tracked"
@@ -41,10 +43,27 @@ exports.createCategory = async (req, res) => {
   }
 };
 
-// Get all categories
+// The caller's token, when one is sent and valid — this route is public
+const optionalUser = (req) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return null;
+  }
+};
+
+// Get all categories. A salesman's token narrows them to the categories they
+// may sell, and ?customer= to those that may be sold to that customer.
 exports.getAllCategories = async (req, res) => {
   try {
-    const categories = await Category.find().sort({ name: 1 });
+    const user = optionalUser(req);
+    const allowed = await allowedCategoryNames({
+      salesmanId: user?.role === 'salesman' ? user.id : null,
+      customerId: req.query.customer
+    });
+    const categories = await Category.find(allowed ? { name: { $in: allowed } } : {}).sort({ name: 1 });
     res.status(200).json({ success: true, data: categories });
   } catch (error) {
     console.error('Get categories error:', error);

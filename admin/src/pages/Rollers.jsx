@@ -6,6 +6,7 @@ import DetailModal from '../components/DetailModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
 import { DEFAULT_SORT } from '../utils/sortOptions';
 import { Search, Plus, Edit2, Trash2, X, Eye, EyeOff, Disc3, Phone } from 'lucide-react';
 
@@ -178,19 +179,21 @@ const Rollers = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar sm:flex-row sm:items-center">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, username or phone…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
+      <FilterPanel active={[searchTerm]}>
+        <div className="srf-toolbar sm:flex-row sm:items-center">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, username or phone…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+          </div>
+          <SortSelect value={sortBy} onChange={setSortBy} className="w-full sm:ml-auto sm:w-auto" />
         </div>
-        <SortSelect value={sortBy} onChange={setSortBy} className="w-full sm:ml-auto sm:w-auto" />
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

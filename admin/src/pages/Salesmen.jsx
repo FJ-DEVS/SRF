@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import api from '../utils/api';
+import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import DetailModal from '../components/DetailModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
+import PermissionsModal from '../components/PermissionsModal';
 import { DEFAULT_SORT } from '../utils/sortOptions';
-import { Search, Plus, Edit2, Trash2, X, Eye, EyeOff, Users, Phone } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, X, Eye, EyeOff, Users, Phone, KeyRound } from 'lucide-react';
 
 const Salesmen = () => {
   const [salesmen, setSalesmen] = useState([]);
@@ -27,6 +29,10 @@ const Salesmen = () => {
   const [detailSalesman, setDetailSalesman] = useState(null);
   const [formData, setFormData] = useState({ name: '', username: '', password: '', phone: '' });
   const [showPassword, setShowPassword] = useState(false);
+  // Permission manager: the salesman being edited, and every customer and
+  // category to choose from (loaded fresh each time it opens)
+  const [permTarget, setPermTarget] = useState(null);
+  const [permOptions, setPermOptions] = useState(null);
 
   useEffect(() => {
     fetchSalesmen();
@@ -117,6 +123,38 @@ const Salesmen = () => {
     setShowPassword(false);
   };
 
+  const openPermissions = async (salesman) => {
+    setPermTarget(salesman);
+    setPermOptions(null);
+    try {
+      const [customers, categoriesRes] = await Promise.all([
+        fetchAll('/customers', { sort: 'name_asc' }),
+        api.get('/categories')
+      ]);
+      setPermOptions({
+        customers: customers.map((c) => ({ value: c._id, label: c.name, sub: c.phone })),
+        categories: (categoriesRes.data.data || []).map((c) => ({ value: c._id, label: c.name }))
+      });
+    } catch (error) {
+      setPermTarget(null);
+      showAlert('Error', error.response?.data?.message || 'Could not load customers and categories', 'error');
+    }
+  };
+
+  const savePermissions = async (values) => {
+    try {
+      const response = await api.put(`/salesman/${permTarget._id}/permissions`, values);
+      if (response.data.success) {
+        const name = permTarget.name;
+        setPermTarget(null);
+        fetchSalesmen();
+        showAlert('Permissions Saved', `${name}'s access has been updated.`, 'success');
+      }
+    } catch (error) {
+      showAlert('Error', error.response?.data?.message || 'Could not save the permissions', 'error');
+    }
+  };
+
   const getDetailFields = (salesman) => [
     { label: 'Name', value: salesman?.name, type: 'text', key: 'name' },
     { label: 'Username', value: salesman?.username, type: 'text', key: 'username' },
@@ -134,6 +172,13 @@ const Salesmen = () => {
         title="View Details"
       >
         <Eye className="h-4 w-4" />
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); openPermissions(salesman); }}
+        className="srf-row-action text-emerald-600 hover:bg-emerald-50"
+        title="Manage Permissions"
+      >
+        <KeyRound className="h-4 w-4" />
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); handleEdit(salesman); }}
@@ -162,19 +207,21 @@ const Salesmen = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar sm:flex-row sm:items-center">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, username or phone…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
+      <FilterPanel active={[searchTerm]}>
+        <div className="srf-toolbar sm:flex-row sm:items-center">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, username or phone…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+          </div>
+          <SortSelect value={sortBy} onChange={setSortBy} className="w-full sm:ml-auto sm:w-auto" />
         </div>
-        <SortSelect value={sortBy} onChange={setSortBy} className="w-full sm:ml-auto sm:w-auto" />
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">
@@ -335,6 +382,36 @@ const Salesmen = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Permission manager */}
+      {permTarget && (
+        <PermissionsModal
+          key={permTarget._id}
+          title={`${permTarget.name} — Permissions`}
+          subtitle="Which customers this salesman can serve, and which item categories they can sell"
+          loading={!permOptions}
+          sections={[
+            {
+              key: 'allowedCustomers',
+              label: 'Customers',
+              allLabel: 'All customers',
+              emptyWarning: 'No customers ticked — this salesman will not see any customer.',
+              options: permOptions?.customers || [],
+              value: permTarget.allowedCustomers
+            },
+            {
+              key: 'allowedCategories',
+              label: 'Item Categories',
+              allLabel: 'All categories',
+              emptyWarning: 'No categories ticked — this salesman will not see any item.',
+              options: permOptions?.categories || [],
+              value: permTarget.allowedCategories
+            }
+          ]}
+          onClose={() => setPermTarget(null)}
+          onSave={savePermissions}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
