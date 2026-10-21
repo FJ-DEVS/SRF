@@ -43,6 +43,12 @@ const customerSchema = new mongoose.Schema({
     ref: 'Salesman',
     default: null
   },
+  // Item categories that may be sold to this customer. Unset means every
+  // category — see utils/permissions.js.
+  allowedCategories: {
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
+    default: undefined
+  },
   createdAt: {
     type: Date,
     default: Date.now

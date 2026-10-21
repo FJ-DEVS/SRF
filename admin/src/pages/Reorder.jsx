@@ -8,6 +8,7 @@ import AlertModal from '../components/AlertModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
 import { formatDateTime } from '../utils/orderMath';
 import { ruleText, periodText, hasPeriod, formatRange } from '../utils/reorderRules';
 import {
@@ -43,8 +44,7 @@ const num = (n) => Number(n || 0).toLocaleString('en-IN');
 
 // How a row's reorder level came about, for the cell's tooltip
 const levelBasis = (row) => {
-  if (row.reorderLevel == null) return 'Not tracked — no reorder rule and no check level';
-  if (row.levelSource === 'checkLevel') return 'No reorder rule — using the check level';
+  if (row.reorderLevel == null) return 'Not tracked — no reorder rule';
   const rule = row.reorder?.level;
   const parts = [];
   if (rule?.quantity != null) parts.push(`Fixed ${rule.quantity}`);
@@ -170,7 +170,7 @@ const Reorder = () => {
       'Nett Available': row.nettAvailable,
       [`${prevMonthLabel} Sales`]: row.prevMonthSales,
       'Re-order Level': row.reorderLevel ?? '',
-      'Reorder Rule': ruleText(row.reorder?.level) || (row.levelSource === 'checkLevel' ? 'Check level' : ''),
+      'Reorder Rule': ruleText(row.reorder?.level) || '',
       'Short fall': row.shortfall || '',
       'Min Reorder Qty': row.minOrderQty || '',
       'Order to be Placed': row.orderQty || '',
@@ -332,9 +332,6 @@ const Reorder = () => {
     return (
       <span className="inline-flex items-center gap-1 tabular-nums" title={levelBasis(row)}>
         <span className="font-semibold text-slate-900">{row.reorderLevel}</span>
-        {row.levelSource === 'checkLevel' && (
-          <span className="text-[10px] uppercase tracking-wide text-slate-400">check</span>
-        )}
       </span>
     );
   };
@@ -396,57 +393,59 @@ const Reorder = () => {
       )}
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by item name…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full !pl-9"
-            />
+      <FilterPanel active={[searchTerm, categoryFilter, state]}>
+        <div className="srf-toolbar">
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by item name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full !pl-9"
+              />
+            </div>
+            <SortSelect value={sortBy} onChange={setSortBy} options={REORDER_SORT_OPTIONS} className="w-full sm:ml-auto sm:w-auto" />
           </div>
-          <SortSelect value={sortBy} onChange={setSortBy} options={REORDER_SORT_OPTIONS} className="w-full sm:ml-auto sm:w-auto" />
-        </div>
 
-        <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
-          <button type="button" onClick={() => setCategoryFilter('')} className={`srf-chip ${categoryFilter === '' ? 'srf-chip-active' : ''}`}>
-            All
-          </button>
-          {categories.map((cat) => (
-            <button
-              key={cat._id}
-              type="button"
-              onClick={() => setCategoryFilter(categoryFilter === cat.name ? '' : cat.name)}
-              className={`srf-chip ${categoryFilter === cat.name ? 'srf-chip-active' : ''}`}
-            >
-              {cat.name}
+          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 scrollbar-none">
+            <button type="button" onClick={() => setCategoryFilter('')} className={`srf-chip ${categoryFilter === '' ? 'srf-chip-active' : ''}`}>
+              All
             </button>
-          ))}
-        </div>
+            {categories.map((cat) => (
+              <button
+                key={cat._id}
+                type="button"
+                onClick={() => setCategoryFilter(categoryFilter === cat.name ? '' : cat.name)}
+                className={`srf-chip ${categoryFilter === cat.name ? 'srf-chip-active' : ''}`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {STATE_CHIPS.map((chip) => (
-            <button
-              key={chip.value}
-              type="button"
-              onClick={() => setState(state === chip.value ? '' : chip.value)}
-              className={`srf-chip ${state === chip.value ? 'srf-chip-active' : chip.tint}`}
-            >
-              <chip.Icon className="h-3 w-3" />
-              {chip.label}
-            </button>
-          ))}
-          {summary?.itemsUntracked > 0 && (
-            <span className="ml-auto text-[11px] text-slate-400">
-              <span className="font-semibold text-slate-700 tabular-nums">{summary.itemsUntracked}</span> not tracked —{' '}
-              <Link to="/reorder-levels?configured=no" className="font-semibold text-indigo-600 hover:underline">set a rule</Link>
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {STATE_CHIPS.map((chip) => (
+              <button
+                key={chip.value}
+                type="button"
+                onClick={() => setState(state === chip.value ? '' : chip.value)}
+                className={`srf-chip ${state === chip.value ? 'srf-chip-active' : chip.tint}`}
+              >
+                <chip.Icon className="h-3 w-3" />
+                {chip.label}
+              </button>
+            ))}
+            {summary?.itemsUntracked > 0 && (
+              <span className="ml-auto text-[11px] text-slate-400">
+                <span className="font-semibold text-slate-700 tabular-nums">{summary.itemsUntracked}</span> not tracked —{' '}
+                <Link to="/reorder-levels?configured=no" className="font-semibold text-indigo-600 hover:underline">set a rule</Link>
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* Report */}
       <div className="srf-card overflow-hidden">

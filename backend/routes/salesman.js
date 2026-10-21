@@ -15,6 +15,7 @@ router.post('/', authMiddleware, salesmanController.createSalesman);
 router.get('/', authMiddleware, salesmanController.getAllSalesmen);
 router.get('/:id', authMiddleware, salesmanController.getSalesman);
 router.put('/:id', authMiddleware, salesmanController.updateSalesman);
+router.put('/:id/permissions', authMiddleware, salesmanController.updateSalesmanPermissions);
 router.delete('/:id', authMiddleware, salesmanController.deleteSalesman);
 
 module.exports = router;

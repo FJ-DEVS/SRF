@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const Item = require('../models/Item');
 const { getIO } = require('../socket');
 const { findItemsPage } = require('./itemController');
-const { categoryCheckLevels } = require('../utils/checkLevel');
 const { parseReorderConfig, buildReorderContext, computeReorderRow } = require('../utils/reorder');
 
 // Escape user input before using it inside a regex
@@ -33,7 +32,7 @@ const NOT_CONFIGURED = { reorder: null };
 
 // Rows for a set of items, computed against live orders
 const reorderRows = async (items) => {
-  const ctx = await buildReorderContext(items, await categoryCheckLevels());
+  const ctx = await buildReorderContext(items);
   return items.map((item) => computeReorderRow(item, ctx));
 };
 
@@ -180,7 +179,7 @@ const STATE_FILTERS = {
   short: (row) => row.orderQty > 0,
   // Tracked items that are fine
   ok: (row) => row.reorderLevel !== null && row.shortfall === 0,
-  // Items with neither a reorder rule nor a check level
+  // Items without a reorder rule
   untracked: (row) => row.reorderLevel === null
 };
 
@@ -196,8 +195,7 @@ exports.getReorderStatus = async (req, res) => {
       .select('name category price quantity checkLevel reorder')
       .lean();
 
-    const levelsByCategory = await categoryCheckLevels();
-    const ctx = await buildReorderContext(items, levelsByCategory);
+    const ctx = await buildReorderContext(items);
     let rows = items.map((item) => computeReorderRow(item, ctx));
 
     if (STATE_FILTERS[state]) rows = rows.filter(STATE_FILTERS[state]);

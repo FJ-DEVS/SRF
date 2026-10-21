@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
 const { applySort } = require('../utils/listSort');
 const { getIO } = require('../socket');
+const { parseIdList } = require('../utils/permissions');
 
 // Login salesman
 exports.loginSalesman = async (req, res) => {
@@ -253,6 +254,36 @@ exports.updateSalesman = async (req, res) => {
       success: false, 
       message: error.message || 'Internal server error' 
     });
+  }
+};
+
+// Set which customers a salesman may serve and which item categories they may
+// sell (Admin only). null for either list opens it to every one.
+exports.updateSalesmanPermissions = async (req, res) => {
+  try {
+    const customers = parseIdList(req.body.allowedCustomers, 'Customers');
+    if (customers.error) return res.status(400).json({ success: false, message: customers.error });
+    const categories = parseIdList(req.body.allowedCategories, 'Categories');
+    if (categories.error) return res.status(400).json({ success: false, message: categories.error });
+
+    // A list is saved as given; "all" is the field left unset
+    const update = {};
+    for (const [field, list] of [['allowedCustomers', customers.list], ['allowedCategories', categories.list]]) {
+      if (list) update.$set = { ...update.$set, [field]: list };
+      else update.$unset = { ...update.$unset, [field]: 1 };
+    }
+
+    const salesman = await Salesman.findByIdAndUpdate(req.params.id, update, { new: true }).select('-password');
+    if (!salesman) {
+      return res.status(404).json({ success: false, message: 'Salesman not found' });
+    }
+
+    getIO().emit('permissions_updated', { role: 'salesman', id: String(salesman._id) });
+
+    res.status(200).json({ success: true, message: 'Permissions updated', data: salesman });
+  } catch (error) {
+    console.error('Update salesman permissions error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 };
 

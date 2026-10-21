@@ -6,10 +6,12 @@ import DetailModal from '../components/DetailModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
+import FilterPanel from '../components/FilterPanel';
+import PermissionsModal from '../components/PermissionsModal';
 import { DEFAULT_SORT } from '../utils/sortOptions';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, ShieldOff, ShieldCheck, UserCircle, Phone,
-  Upload, FileText, MapPin
+  Upload, FileText, MapPin, KeyRound
 } from 'lucide-react';
 
 const PAYMENT_RATING = {
@@ -61,6 +63,10 @@ const Customers = () => {
   });
   const certInputRef = useRef(null);
   const [certUploading, setCertUploading] = useState(false);
+  // Permission manager: the customer being edited and the categories to
+  // choose from (loaded fresh each time it opens)
+  const [permTarget, setPermTarget] = useState(null);
+  const [permCategories, setPermCategories] = useState(null);
 
   useEffect(() => {
     fetchCustomers();
@@ -231,6 +237,32 @@ const Customers = () => {
     }
   };
 
+  const openPermissions = async (customer) => {
+    setPermTarget(customer);
+    setPermCategories(null);
+    try {
+      const response = await api.get('/categories');
+      setPermCategories((response.data.data || []).map((c) => ({ value: c._id, label: c.name })));
+    } catch (error) {
+      setPermTarget(null);
+      showAlert('Error', error.response?.data?.message || 'Could not load the categories', 'error');
+    }
+  };
+
+  const savePermissions = async (values) => {
+    try {
+      const response = await api.put(`/customers/${permTarget._id}/permissions`, values);
+      if (response.data.success) {
+        const name = permTarget.name;
+        setPermTarget(null);
+        fetchCustomers();
+        showAlert('Permissions Saved', `${name}'s item categories have been updated.`, 'success');
+      }
+    } catch (error) {
+      showAlert('Error', error.response?.data?.message || 'Could not save the permissions', 'error');
+    }
+  };
+
   const getDetailFields = (customer) => [
     { label: 'Name', value: customer?.name, type: 'text', key: 'name' },
     { label: 'Phone', value: customer?.phone, type: 'text', key: 'phone' },
@@ -267,6 +299,13 @@ const Customers = () => {
         {customer.isBlocked ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
       </button>
       <button
+        onClick={(e) => { e.stopPropagation(); openPermissions(customer); }}
+        className="srf-row-action text-emerald-600 hover:bg-emerald-50"
+        title="Manage Permissions"
+      >
+        <KeyRound className="h-4 w-4" />
+      </button>
+      <button
         onClick={(e) => { e.stopPropagation(); handleEdit(customer); }}
         className="srf-row-action text-slate-500 hover:bg-slate-100"
         title="Edit"
@@ -293,32 +332,34 @@ const Customers = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar sm:flex-row sm:items-center">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, phone or GSTIN…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
+      <FilterPanel active={[searchTerm, filterBlocked, filterPayment]}>
+        <div className="srf-toolbar sm:flex-row sm:items-center">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, phone or GSTIN…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 sm:ml-auto sm:flex">
+            <select value={filterBlocked} onChange={(e) => setFilterBlocked(e.target.value)}>
+              <option value="">All statuses</option>
+              <option value="false">Active only</option>
+              <option value="true">Blocked only</option>
+            </select>
+            <select value={filterPayment} onChange={(e) => setFilterPayment(e.target.value)}>
+              <option value="">All payers</option>
+              <option value="good">Good payer</option>
+              <option value="average">Average payer</option>
+              <option value="bad">Poor payer</option>
+            </select>
+            <SortSelect value={sortBy} onChange={setSortBy} className="col-span-2 sm:col-span-1" />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-2.5 sm:ml-auto sm:flex">
-          <select value={filterBlocked} onChange={(e) => setFilterBlocked(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="false">Active only</option>
-            <option value="true">Blocked only</option>
-          </select>
-          <select value={filterPayment} onChange={(e) => setFilterPayment(e.target.value)}>
-            <option value="">All payers</option>
-            <option value="good">Good payer</option>
-            <option value="average">Average payer</option>
-            <option value="bad">Poor payer</option>
-          </select>
-          <SortSelect value={sortBy} onChange={setSortBy} className="col-span-2 sm:col-span-1" />
-        </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">
@@ -597,6 +638,28 @@ const Customers = () => {
         fields={getDetailFields(detailCustomer)}
         onEdit={() => detailCustomer && handleEdit(detailCustomer)}
       />
+
+      {/* Permission manager */}
+      {permTarget && (
+        <PermissionsModal
+          key={permTarget._id}
+          title={`${permTarget.name} — Permissions`}
+          subtitle="Which item categories can be sold to this customer"
+          loading={!permCategories}
+          sections={[
+            {
+              key: 'allowedCategories',
+              label: 'Item Categories',
+              allLabel: 'All categories',
+              emptyWarning: 'No categories ticked — no item can be ordered for this customer.',
+              options: permCategories || [],
+              value: permTarget.allowedCategories
+            }
+          ]}
+          onClose={() => setPermTarget(null)}
+          onSave={savePermissions}
+        />
+      )}
 
       {/* Delete Confirmation Modal */}
       <ConfirmModal

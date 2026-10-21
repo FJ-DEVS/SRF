@@ -83,7 +83,7 @@ const itemSchema = new mongoose.Schema({
     min: [0, 'Check level cannot be negative']
   },
   // Reorder level and minimum order quantity rules. Optional — an item
-  // without one falls back to its check level as a plain reorder level.
+  // without one is not reordered. Independent of the check level.
   reorder: {
     type: reorderSchema,
     default: null

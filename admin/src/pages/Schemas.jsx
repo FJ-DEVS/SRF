@@ -5,6 +5,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
+import FilterPanel from '../components/FilterPanel';
 import { Search, Plus, Edit2, Trash2, X, Award, Trophy, Gift } from 'lucide-react';
 
 const emptyForm = {
@@ -253,18 +254,20 @@ const Schemas = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name or run by…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9"
-          />
+      <FilterPanel active={[searchTerm]}>
+        <div className="srf-toolbar">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name or run by…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9"
+            />
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

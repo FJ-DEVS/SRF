@@ -23,3 +23,14 @@ export const TYPE_STYLES = {
 };
 
 export const typeStyle = (type) => TYPE_STYLES[type] || TYPE_STYLES['sell order'];
+
+// Every order list opens on sell orders; the other types show only once they
+// are picked. A link can still open a list on one type (?type=purchase order)
+// or on every type (?type=all).
+export const DEFAULT_ORDER_TYPE = 'sell order';
+
+export const typeFromParams = (searchParams) => {
+  const type = searchParams.get('type');
+  if (type === 'all') return '';
+  return TYPE_STYLES[type] ? type : DEFAULT_ORDER_TYPE;
+};

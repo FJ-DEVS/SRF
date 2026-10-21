@@ -6,6 +6,7 @@ import AlertModal from '../../components/AlertModal';
 import DetailModal from '../../components/DetailModal';
 import Pagination from '../../components/Pagination';
 import SortSelect from '../../components/SortSelect';
+import FilterPanel from '../../components/FilterPanel';
 import { NAME_SORT_OPTIONS } from '../../utils/sortOptions';
 import { initials, callHref } from '../../utils/contact';
 import { Search, X, Phone, ShieldOff, ShieldCheck, Users, ChevronRight } from 'lucide-react';
@@ -206,54 +207,56 @@ const CrmCustomers = () => {
   return (
     <div className="space-y-3">
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search name, phone or GSTIN…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9 !pr-9"
-          />
-          {searchTerm && (
-            <button
-              type="button"
-              onClick={() => setSearchTerm('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
-              aria-label="Clear search"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1.5">
-            {STATUS_FILTERS.map((filter) => (
+      <FilterPanel active={[searchTerm, statusFilter]}>
+        <div className="srf-toolbar">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search name, phone or GSTIN…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9 !pr-9"
+            />
+            {searchTerm && (
               <button
-                key={filter.value || 'all'}
                 type="button"
-                onClick={() => setStatusFilter(filter.value)}
-                className={`srf-chip ${statusFilter === filter.value ? 'srf-chip-active' : ''}`}
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                aria-label="Clear search"
               >
-                {filter.label}
+                <X className="h-4 w-4" />
               </button>
-            ))}
+            )}
           </div>
-          <SortSelect value={sortBy} onChange={setSortBy} options={NAME_SORT_OPTIONS} className="ml-auto min-w-0 flex-1 sm:max-w-[11rem] sm:flex-none" />
-        </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>{pagination.total} customer{pagination.total === 1 ? '' : 's'}</span>
-          {hasFilters && (
-            <button type="button" onClick={clearFilters} className="flex items-center gap-1 font-medium hover:text-slate-600">
-              <X className="h-3 w-3" />
-              Clear filters
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1.5">
+              {STATUS_FILTERS.map((filter) => (
+                <button
+                  key={filter.value || 'all'}
+                  type="button"
+                  onClick={() => setStatusFilter(filter.value)}
+                  className={`srf-chip ${statusFilter === filter.value ? 'srf-chip-active' : ''}`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+            <SortSelect value={sortBy} onChange={setSortBy} options={NAME_SORT_OPTIONS} className="ml-auto min-w-0 flex-1 sm:max-w-[11rem] sm:flex-none" />
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>{pagination.total} customer{pagination.total === 1 ? '' : 's'}</span>
+            {hasFilters && (
+              <button type="button" onClick={clearFilters} className="flex items-center gap-1 font-medium hover:text-slate-600">
+                <X className="h-3 w-3" />
+                Clear filters
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

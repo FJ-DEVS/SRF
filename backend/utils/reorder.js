@@ -3,6 +3,9 @@
 // quantity, the consumption over a period, or, when both are given, the
 // higher or lower of the two.
 //
+// Reorder levels have nothing to do with check levels: an item with no reorder
+// rule of its own is not tracked here and is never ordered from this report.
+//
 //   nett available  = closing stock + pending purchase orders
 //                     (stock is already net of committed sell orders)
 //   shortfall       = reorder level − nett available, when positive
@@ -19,7 +22,6 @@
 // Keep the period arithmetic in step with admin/src/utils/reorderRules.js,
 // which draws the same days on the calendar.
 const Order = require('../models/Order');
-const { effectiveCheckLevel } = require('./checkLevel');
 
 const PERIOD_UNITS = ['days', 'weeks', 'months', 'years'];
 const PERIOD_MODES = ['rolling', 'calendar', 'custom'];
@@ -221,9 +223,9 @@ const pendingPurchaseByItem = async (itemIds) => {
 };
 
 // Everything computeReorderRow needs for a set of items: consumption over
-// every distinct period their rules use, last month's sales, pending
-// purchases and the category check levels the fallback reads.
-const buildReorderContext = async (items, levelsByCategory, now = new Date()) => {
+// every distinct period their rules use, last month's sales and pending
+// purchases.
+const buildReorderContext = async (items, now = new Date()) => {
   const itemIds = items.map((i) => i._id);
 
   // key -> { since, until, itemIds, consumption }
@@ -246,7 +248,7 @@ const buildReorderContext = async (items, levelsByCategory, now = new Date()) =>
     })
   ]);
 
-  return { now, windows, prevMonthSales, prevMonth, pendingPurchase, levelsByCategory };
+  return { now, windows, prevMonthSales, prevMonth, pendingPurchase };
 };
 
 /* ---------- Rows ---------- */
@@ -275,18 +277,10 @@ const computeReorderRow = (item, ctx) => {
   const id = String(item._id);
   const config = item.reorder || null;
 
+  // Only the item's own reorder rule sets its level — without one the item is
+  // not tracked, whatever its check level says
   const level = resolveRule(config?.level, ctx, id);
-  let reorderLevel = level.value;
-  // 'rule' when the item's own reorder rule set it, 'checkLevel' when it fell
-  // back to the check level, null when the item is not tracked at all
-  let levelSource = reorderLevel === null ? null : 'rule';
-  if (reorderLevel === null) {
-    const fallback = effectiveCheckLevel(item, ctx.levelsByCategory);
-    if (fallback !== null) {
-      reorderLevel = fallback;
-      levelSource = 'checkLevel';
-    }
-  }
+  const reorderLevel = level.value;
 
   const minOrder = resolveRule(config?.minOrder, ctx, id);
   const minOrderQty = minOrder.value ?? 0;
@@ -312,7 +306,6 @@ const computeReorderRow = (item, ctx) => {
     levelConsumption: level.consumption,
     levelWindow: level.window,
     reorderLevel,
-    levelSource,
     minOrderConsumption: minOrder.consumption,
     minOrderWindow: minOrder.window,
     minOrderQty,

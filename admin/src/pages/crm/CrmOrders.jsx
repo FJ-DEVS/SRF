@@ -11,6 +11,7 @@ import StatusBadge from '../../components/StatusBadge';
 import BillBadge from '../../components/BillBadge';
 import CargoBadge from '../../components/CargoBadge';
 import TypeBadge from '../../components/TypeBadge';
+import FilterPanel from '../../components/FilterPanel';
 import { orderQty, formatDate } from '../../utils/orderMath';
 import { callHref, whatsappHref } from '../../utils/contact';
 import { renderOrderImage } from '../../utils/orderImage';
@@ -331,133 +332,135 @@ const CrmOrders = () => {
   return (
     <div className="space-y-3">
       {/* Toolbar */}
-      <div className="srf-toolbar">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search customer, bill no. or order ID…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full !pl-9 !pr-9"
-          />
-          {searchTerm && (
-            <button
-              type="button"
-              onClick={() => setSearchTerm('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
-              aria-label="Clear search"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {isSell && STATUS_TABS.map((tab) => (
-            <button
-              key={tab.value || 'all'}
-              type="button"
-              onClick={() => setStatusFilter(tab.value)}
-              className={`srf-chip ${statusFilter === tab.value ? 'srf-chip-active' : ''}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setShowDates((v) => !v)}
-            className={`srf-chip ml-auto ${showDates || hasRange ? 'srf-chip-active' : ''}`}
-          >
-            <CalendarDays className="h-3.5 w-3.5" />
-            {rangeLabel}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 sm:flex">
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            aria-label="Order type"
-            title="Order type"
-            className="col-span-2 min-w-0 sm:w-[11rem]"
-          >
-            {TYPE_OPTIONS.map((t) => <option key={t.value || 'all'} value={t.value}>{t.label}</option>)}
-          </select>
-          <SortSelect value={sortBy} onChange={setSortBy} options={SORT_OPTIONS} className="min-w-0 sm:w-[13rem]" />
-          <select
-            value={cargoFilter}
-            onChange={(e) => setCargoFilter(e.target.value)}
-            aria-label="Cargo"
-            title="Cargo"
-            className="min-w-0 sm:w-[13rem]"
-          >
-            <option value="">All cargos</option>
-            {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-          </select>
-        </div>
-
-        {/* Date period */}
-        {showDates && (
-          <div className="space-y-2.5 rounded-lg bg-slate-50 p-3">
-            <div className="grid grid-cols-2 gap-2.5">
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                From
-                <input
-                  type="date"
-                  value={fromDate}
-                  max={toDate || undefined}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="mt-1 w-full"
-                />
-              </label>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                To
-                <input
-                  type="date"
-                  value={toDate}
-                  min={fromDate || undefined}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="mt-1 w-full"
-                />
-              </label>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {DATE_PRESETS.map((preset) => {
-                const from = preset.from();
-                const to = preset.to();
-                const active = fromDate === from && toDate === to;
-                return (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => { setFromDate(from); setToDate(to); }}
-                    className={`srf-chip ${active ? 'srf-chip-active' : ''}`}
-                  >
-                    {preset.label}
-                  </button>
-                );
-              })}
-              {hasRange && (
-                <button type="button" onClick={() => { setFromDate(''); setToDate(''); }} className="srf-chip text-slate-400">
-                  <X className="h-3 w-3" />
-                  Clear dates
-                </button>
-              )}
-            </div>
+      <FilterPanel active={[searchTerm, hasRange, cargoFilter, !isSell, statusFilter !== 'billed']}>
+        <div className="srf-toolbar">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search customer, bill no. or order ID…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full !pl-9 !pr-9"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                aria-label="Clear search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
-        )}
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>{pagination.total} {countLabel ? `${countLabel} ` : ''}order{pagination.total === 1 ? '' : 's'}</span>
-          {hasFilters && (
-            <button type="button" onClick={clearFilters} className="flex items-center gap-1 font-medium hover:text-slate-600">
-              <X className="h-3 w-3" />
-              Reset filters
+          <div className="flex flex-wrap items-center gap-1.5">
+            {isSell && STATUS_TABS.map((tab) => (
+              <button
+                key={tab.value || 'all'}
+                type="button"
+                onClick={() => setStatusFilter(tab.value)}
+                className={`srf-chip ${statusFilter === tab.value ? 'srf-chip-active' : ''}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setShowDates((v) => !v)}
+              className={`srf-chip ml-auto ${showDates || hasRange ? 'srf-chip-active' : ''}`}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              {rangeLabel}
             </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              aria-label="Order type"
+              title="Order type"
+              className="col-span-2 min-w-0 sm:w-[11rem]"
+            >
+              {TYPE_OPTIONS.map((t) => <option key={t.value || 'all'} value={t.value}>{t.label}</option>)}
+            </select>
+            <SortSelect value={sortBy} onChange={setSortBy} options={SORT_OPTIONS} className="min-w-0 sm:w-[13rem]" />
+            <select
+              value={cargoFilter}
+              onChange={(e) => setCargoFilter(e.target.value)}
+              aria-label="Cargo"
+              title="Cargo"
+              className="min-w-0 sm:w-[13rem]"
+            >
+              <option value="">All cargos</option>
+              {cargos.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {/* Date period */}
+          {showDates && (
+            <div className="space-y-2.5 rounded-lg bg-slate-50 p-3">
+              <div className="grid grid-cols-2 gap-2.5">
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  From
+                  <input
+                    type="date"
+                    value={fromDate}
+                    max={toDate || undefined}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="mt-1 w-full"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  To
+                  <input
+                    type="date"
+                    value={toDate}
+                    min={fromDate || undefined}
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="mt-1 w-full"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {DATE_PRESETS.map((preset) => {
+                  const from = preset.from();
+                  const to = preset.to();
+                  const active = fromDate === from && toDate === to;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => { setFromDate(from); setToDate(to); }}
+                      className={`srf-chip ${active ? 'srf-chip-active' : ''}`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+                {hasRange && (
+                  <button type="button" onClick={() => { setFromDate(''); setToDate(''); }} className="srf-chip text-slate-400">
+                    <X className="h-3 w-3" />
+                    Clear dates
+                  </button>
+                )}
+              </div>
+            </div>
           )}
+
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>{pagination.total} {countLabel ? `${countLabel} ` : ''}order{pagination.total === 1 ? '' : 's'}</span>
+            {hasFilters && (
+              <button type="button" onClick={clearFilters} className="flex items-center gap-1 font-medium hover:text-slate-600">
+                <X className="h-3 w-3" />
+                Reset filters
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </FilterPanel>
 
       {/* List */}
       <div className="srf-card overflow-hidden">

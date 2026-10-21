@@ -1,5 +1,7 @@
 const Customer = require('../models/Customer');
+const Salesman = require('../models/Salesman');
 const { getIO } = require('../socket');
+const { parseIdList, allowedCustomerIds } = require('../utils/permissions');
 const { applySort } = require('../utils/listSort');
 const { exact, findDuplicate, isPlaceholderPhone } = require('../utils/duplicateCheck');
 
@@ -13,6 +15,17 @@ const normaliseCertificate = (cert) => ({
   key: (cert?.key || '').trim(),
   name: (cert?.name || '').trim()
 });
+
+// A salesman limited to a list of customers can still see the ones assigned
+// to them — add the customer to that list. Salesmen open to every customer
+// have no list and are left alone.
+const grantAssignedSalesman = (customer) =>
+  customer.assignedSalesman
+    ? Salesman.updateOne(
+      { _id: customer.assignedSalesman, allowedCustomers: { $ne: null } },
+      { $addToSet: { allowedCustomers: customer._id } }
+    )
+    : null;
 
 // Create customer
 exports.createCustomer = async (req, res) => {
@@ -38,6 +51,7 @@ exports.createCustomer = async (req, res) => {
     });
 
     await customer.save();
+    await grantAssignedSalesman(customer);
 
     getIO().emit('customers_updated');
 
@@ -172,6 +186,8 @@ exports.updateCustomer = async (req, res) => {
       });
     }
 
+    if (assignedSalesman !== undefined) await grantAssignedSalesman(customer);
+
     getIO().emit('customers_updated');
 
     res.status(200).json({
@@ -186,6 +202,31 @@ exports.updateCustomer = async (req, res) => {
       success: false, 
       message: error.message || 'Internal server error' 
     });
+  }
+};
+
+// Set which item categories may be sold to a customer (Admin only). null opens
+// every category.
+exports.updateCustomerPermissions = async (req, res) => {
+  try {
+    const categories = parseIdList(req.body.allowedCategories, 'Categories');
+    if (categories.error) return res.status(400).json({ success: false, message: categories.error });
+
+    const update = categories.list
+      ? { $set: { allowedCategories: categories.list } }
+      : { $unset: { allowedCategories: 1 } };
+    const customer = await Customer.findByIdAndUpdate(req.params.id, update, { new: true })
+      .populate('assignedSalesman', 'name username phone');
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer not found' });
+    }
+
+    getIO().emit('customers_updated');
+
+    res.status(200).json({ success: true, message: 'Permissions updated', data: customer });
+  } catch (error) {
+    console.error('Update customer permissions error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 };
 
@@ -248,10 +289,14 @@ exports.getCustomersForSalesman = async (req, res) => {
       ];
     }
 
+    // Only the customers this salesman has been given
+    const allowed = await allowedCustomerIds(req.user.id);
+    if (allowed) query._id = { $in: allowed };
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const customers = await Customer.find(query)
-      .select('phone name gstin isBlocked')
+      .select('phone name gstin isBlocked allowedCategories')
       .sort({ name: 1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -279,7 +324,9 @@ exports.getCustomersForSalesman = async (req, res) => {
 // Get single customer by ID (salesman access)
 exports.getCustomerByIdForSalesman = async (req, res) => {
   try {
-    const customer = await Customer.findById(req.params.id).select('phone name gstin');
+    const allowed = await allowedCustomerIds(req.user.id);
+    const permitted = !allowed || allowed.some((id) => String(id) === req.params.id);
+    const customer = permitted ? await Customer.findById(req.params.id).select('phone name gstin allowedCategories') : null;
 
     if (!customer) {
       return res.status(404).json({
