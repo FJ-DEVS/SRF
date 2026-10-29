@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 // Pieces of one item that are damaged and so no longer count as stock. They
-// get here when the admin marks them off an item's stock, or when a completed
+// get here when the admin or an accounts manager marks them off an item's stock, or when a completed
 // return order sends them here instead of back onto the shelf. Name, price and
 // category are read from the item itself, so a rename shows up here too.
 const damagedItemSchema = new mongoose.Schema({

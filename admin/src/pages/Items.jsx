@@ -8,94 +8,23 @@ import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
-import StatusBadge from '../components/StatusBadge';
 import SortSelect from '../components/SortSelect';
 import FilterPanel from '../components/FilterPanel';
+import PiecesModal from '../components/PiecesModal';
+import ItemDetailModal from '../components/ItemDetailModal';
+import { StockBadge, CheckLevelCell } from '../components/ItemStockCells';
 import { ITEM_SORT_OPTIONS, DEFAULT_SORT } from '../utils/sortOptions';
 import { formatDateTime } from '../utils/orderMath';
 import {
   Search, Plus, Edit2, Trash2, X, Eye, Tag, TrendingUp, Package,
-  ArrowDownToLine, ArrowUpFromLine, IndianRupee, Boxes, Check, History,
-  Download, Upload, AlertTriangle, ShieldCheck, PackageX, ArchiveRestore,
-  FileText, ShoppingCart, Undo2, ArrowRight
+  Boxes, Check, Download, Upload, AlertTriangle, ShieldCheck, PackageX,
+  ArchiveRestore, FileText, ShoppingCart
 } from 'lucide-react';
-
-// Recent-activity marker per order type — colours match TYPE_STYLES: stock
-// coming in (emerald), going out (indigo), coming back (rose)
-const ACTIVITY_MARKS = {
-  'purchase order': { Icon: ArrowDownToLine, className: 'bg-emerald-50 text-emerald-600' },
-  'sell order': { Icon: ArrowUpFromLine, className: 'bg-indigo-50 text-indigo-600' },
-  'return order': { Icon: Undo2, className: 'bg-rose-50 text-rose-600' }
-};
 
 // "2026-10-14_15-42" in local time, so files downloaded the same day sort apart
 const fileStamp = (d) => {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}`;
-};
-
-// Asks how many pieces to move between an item's stock and its damaged count
-const PiecesModal = ({ title, itemName, available, availableLabel, hint, confirmLabel, confirmClass, onClose, onConfirm }) => {
-  const [qty, setQty] = useState('');
-  const [saving, setSaving] = useState(false);
-  const pieces = Number(qty);
-  const valid = Number.isInteger(pieces) && pieces >= 1 && pieces <= available;
-
-  const submit = async (e) => {
-    e?.preventDefault();
-    if (!valid || saving) return;
-    setSaving(true);
-    try {
-      await onConfirm(pieces);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="srf-modal-backdrop" onClick={onClose}>
-      <div className="srf-modal-panel max-w-sm" onClick={(e) => e.stopPropagation()}>
-        <div className="srf-modal-header">
-          <div className="min-w-0">
-            <h3 className="srf-modal-title">{title}</h3>
-            <p className="truncate text-[11px] text-slate-400">{itemName}</p>
-          </div>
-          <button onClick={onClose} className="srf-icon-btn shrink-0" aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <form onSubmit={submit} className="srf-modal-body space-y-3">
-          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5 text-[13px]">
-            <span className="text-slate-500">{availableLabel}</span>
-            <span className="font-display text-base font-bold tabular-nums text-slate-900">{available}</span>
-          </div>
-          <div>
-            <label className="mb-1.5 block">Pieces</label>
-            <input
-              type="number"
-              min="1"
-              max={available}
-              required
-              autoFocus
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="w-full"
-              placeholder={`1 – ${available}`}
-            />
-            <p className="mt-1 text-[11px] text-slate-400">{hint}</p>
-          </div>
-        </form>
-
-        <div className="srf-modal-footer">
-          <button type="button" onClick={onClose} className="srf-btn srf-btn-secondary">Cancel</button>
-          <button type="button" onClick={submit} disabled={!valid || saving} className={`srf-btn ${confirmClass}`}>
-            {saving ? 'Saving…' : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 };
 
 const Items = () => {
@@ -113,13 +42,10 @@ const Items = () => {
 
   const [showModal, setShowModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [alertConfig, setAlertConfig] = useState({ title: '', message: '', type: 'error' });
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailItem, setDetailItem] = useState(null);
-  const [detailStats, setDetailStats] = useState(null);
-  const [detailStatsLoading, setDetailStatsLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     price: '',
@@ -625,59 +551,8 @@ const Items = () => {
     setFormData({ name: '', price: '', quantity: '', category: '', checkLevel: '' });
   };
 
-  const handleViewDetail = async (item) => {
-    setDetailItem(item);
-    setShowDetailModal(true);
-    setDetailStats(null);
-    setDetailStatsLoading(true);
-    try {
-      const response = await api.get(`/items/${item._id}/stats`);
-      if (response.data.success) setDetailStats(response.data.data);
-    } catch (error) {
-      console.error('Error fetching item stats:', error);
-    } finally {
-      setDetailStatsLoading(false);
-    }
-  };
-
-  const closeDetail = () => {
-    setShowDetailModal(false);
-    setDetailItem(null);
-    setDetailStats(null);
-  };
-
-  const stockBadge = (item) => {
-    const qty = item.quantity;
-    if (qty === 0) return <span className="srf-badge bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">Out of stock</span>;
-    if (item.belowCheckLevel) {
-      return (
-        <span className="srf-badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">
-          <AlertTriangle className="h-3 w-3" />
-          {qty} · below check level
-        </span>
-      );
-    }
-    if (item.effectiveCheckLevel == null && qty <= 10) {
-      return <span className="srf-badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200">{qty} left</span>;
-    }
-    return <span className="text-[13px] text-slate-600">{qty}</span>;
-  };
-
-  // Own check level reads plain; one inherited from the category is marked
-  const checkLevelCell = (item) => {
-    if (item.checkLevel != null) {
-      return <span className="text-[13px] tabular-nums text-slate-700">{item.checkLevel}</span>;
-    }
-    if (item.effectiveCheckLevel != null) {
-      return (
-        <span className="text-[13px] tabular-nums text-slate-400" title="Inherited from the category">
-          {item.effectiveCheckLevel}
-          <span className="ml-1 text-[10px] uppercase tracking-wide">cat</span>
-        </span>
-      );
-    }
-    return <span className="text-slate-300">—</span>;
-  };
+  const handleViewDetail = (item) => setDetailItem(item);
+  const closeDetail = () => setDetailItem(null);
 
   const rowActions = (item) => (
     <>
@@ -909,8 +784,8 @@ const Items = () => {
                           : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="font-medium text-slate-800">₹{item.price.toLocaleString('en-IN')}</td>
-                      <td>{stockBadge(item)}</td>
-                      <td>{checkLevelCell(item)}</td>
+                      <td><StockBadge item={item} /></td>
+                      <td><CheckLevelCell item={item} /></td>
                       <td>
                         <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           {rowActions(item)}
@@ -938,7 +813,7 @@ const Items = () => {
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
                     <span className="font-semibold text-slate-800">₹{item.price.toLocaleString('en-IN')}</span>
-                    {stockBadge(item)}
+                    <StockBadge item={item} />
                     {item.category && (
                       <span className="srf-badge bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">{item.category}</span>
                     )}
@@ -1173,183 +1048,28 @@ const Items = () => {
       )}
 
       {/* Item Detail Modal — with purchase & sales insight */}
-      {showDetailModal && detailItem && (
-        <div className="srf-modal-backdrop" onClick={closeDetail}>
-          <div className="srf-modal-panel max-w-lg" onClick={(e) => e.stopPropagation()}>
-            <div className="srf-modal-header">
-              <div className="min-w-0">
-                <h3 className="srf-modal-title truncate">{detailItem.name}</h3>
-                {detailItem.category && (
-                  <span className="srf-badge mt-1 bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200">
-                    {detailItem.category}
-                  </span>
-                )}
-              </div>
-              <button onClick={closeDetail} className="srf-icon-btn shrink-0">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="srf-modal-body space-y-4">
-              {/* Price / stock tiles */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-                  <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    <IndianRupee className="h-3 w-3" /> Price
-                  </p>
-                  <p className="mt-1 font-display text-lg font-bold text-slate-900">
-                    ₹{detailItem.price.toLocaleString('en-IN')}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-                  <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    <Boxes className="h-3 w-3" /> In Stock
-                  </p>
-                  <p className={`mt-1 font-display text-lg font-bold ${
-                    detailItem.quantity === 0 ? 'text-rose-600' : detailItem.belowCheckLevel ? 'text-amber-600' : 'text-slate-900'
-                  }`}>
-                    {detailItem.quantity}
-                  </p>
-                  {detailItem.effectiveCheckLevel != null && (
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      Check level {detailItem.effectiveCheckLevel}
-                      {detailItem.checkLevel == null && ' (from category)'}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {detailItem.belowCheckLevel && (
-                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  Stock has reached the check level — time to reorder.
-                </div>
-              )}
-
-              {/* Purchase / sales stats */}
-              {detailStatsLoading ? (
-                <div className="flex items-center justify-center py-6">
-                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-slate-500" />
-                </div>
-              ) : detailStats ? (
-                <>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-                      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-600">
-                        <ArrowDownToLine className="h-3 w-3" /> Total Purchased
-                      </p>
-                      <p className="mt-1 font-display text-lg font-bold text-emerald-700">{detailStats.totalPurchased}</p>
-                      <p className="text-[11px] text-emerald-600/70">
-                        {detailStats.purchaseOrders} purchase order{detailStats.purchaseOrders === 1 ? '' : 's'}
-                        {detailStats.pendingPurchase > 0 && ` · ${detailStats.pendingPurchase} pending`}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
-                      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-indigo-600">
-                        <ArrowUpFromLine className="h-3 w-3" /> Total Sold
-                      </p>
-                      <p className="mt-1 font-display text-lg font-bold text-indigo-700">{detailStats.totalSold}</p>
-                      <p className="text-[11px] text-indigo-600/70">
-                        {detailStats.sellOrders} sell order{detailStats.sellOrders === 1 ? '' : 's'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {(detailStats.lastPurchase || detailStats.lastSold) && (
-                    <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-600">
-                      {detailStats.lastPurchase && (
-                        <p>
-                          <span className="font-semibold text-slate-800">Last purchase:</span>{' '}
-                          {detailStats.lastPurchase.quantity} unit{detailStats.lastPurchase.quantity === 1 ? '' : 's'} on{' '}
-                          {formatDate(detailStats.lastPurchase.date)} ({detailStats.lastPurchase.status})
-                        </p>
-                      )}
-                      {detailStats.lastSold && (
-                        <p className={detailStats.lastPurchase ? 'mt-1' : ''}>
-                          <span className="font-semibold text-slate-800">Last sold:</span>{' '}
-                          {detailStats.lastSold.quantity} unit{detailStats.lastSold.quantity === 1 ? '' : 's'} on{' '}
-                          {formatDate(detailStats.lastSold.date)}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Recent activity */}
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                        <History className="h-3.5 w-3.5" /> Recent activity
-                      </p>
-                      {detailStats.recentActivity.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/orders?item=${detailItem._id}`)}
-                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-50"
-                        >
-                          View all orders
-                          <ArrowRight className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                    {detailStats.recentActivity.length === 0 ? (
-                      <p className="mt-2 rounded-lg bg-slate-50 px-3 py-3 text-center text-xs text-slate-400">
-                        No orders yet for this item
-                      </p>
-                    ) : (
-                      <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
-                        {detailStats.recentActivity.map((a, i) => {
-                          const { Icon, className } = ACTIVITY_MARKS[a.type] || ACTIVITY_MARKS['sell order'];
-                          return (
-                          <div key={i} className="flex items-center gap-2.5 px-3 py-2">
-                            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${className}`}>
-                              <Icon className="h-3 w-3" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-xs font-medium text-slate-700">{a.partyName || '—'}</p>
-                              <p className="text-[11px] text-slate-400">
-                                {a.type === 'return order' && 'Return · '}{formatDate(a.date)}
-                              </p>
-                            </div>
-                            <span className="text-xs font-semibold text-slate-700">× {a.quantity}</span>
-                            <StatusBadge status={a.status} />
-                          </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p className="rounded-lg bg-slate-50 px-3 py-3 text-center text-xs text-slate-400">
-                  Could not load purchase statistics
-                </p>
-              )}
-
-              <p className="text-[11px] text-slate-400">
-                Added {formatDate(detailItem.createdAt)} · Updated {formatDate(detailItem.updatedAt)}
-              </p>
-            </div>
-
-            <div className="srf-modal-footer">
-              <button onClick={closeDetail} className="srf-btn srf-btn-secondary">Close</button>
-              <button
-                onClick={() => { const it = detailItem; closeDetail(); setDamageTarget(it); }}
-                disabled={detailItem.quantity === 0}
-                className="srf-btn border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
-              >
-                <PackageX className="h-3.5 w-3.5" />
-                Mark Damaged
-              </button>
-              <button
-                onClick={() => { const it = detailItem; closeDetail(); handleEdit(it); }}
-                className="srf-btn srf-btn-primary"
-              >
-                <Edit2 className="h-3.5 w-3.5" />
-                Edit Item
-              </button>
-            </div>
-          </div>
-        </div>
+      {detailItem && (
+        <ItemDetailModal
+          item={detailItem}
+          onClose={closeDetail}
+          onViewOrders={() => navigate(`/orders?item=${detailItem._id}`)}
+        >
+          <button
+            onClick={() => { const it = detailItem; closeDetail(); setDamageTarget(it); }}
+            disabled={detailItem.quantity === 0}
+            className="srf-btn border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
+          >
+            <PackageX className="h-3.5 w-3.5" />
+            Mark Damaged
+          </button>
+          <button
+            onClick={() => { const it = detailItem; closeDetail(); handleEdit(it); }}
+            className="srf-btn srf-btn-primary"
+          >
+            <Edit2 className="h-3.5 w-3.5" />
+            Edit Item
+          </button>
+        </ItemDetailModal>
       )}
 
       {/* Delete Confirmation Modal */}

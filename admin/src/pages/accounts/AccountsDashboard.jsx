@@ -295,9 +295,13 @@ const AccountsDashboard = () => {
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: STATUS_COLORS.cancelled }} />
               Approve a customer's <span className="font-semibold text-slate-800">cancellation request</span>.
             </li>
+            <li className="flex gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />
+              Mark item stock as <span className="font-semibold text-slate-800">damaged</span>, or restore damaged pieces to stock.
+            </li>
           </ul>
           <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-snug text-slate-400">
-            Creating, editing, deleting or reverting orders is handled by the admin.
+            Creating, editing, deleting or reverting orders and items is handled by the admin.
           </p>
         </div>
       </div>

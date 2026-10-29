@@ -30,6 +30,7 @@ import RollerPlacements from './pages/roller/RollerPlacements';
 import AccountsLogin from './pages/accounts/AccountsLogin';
 import AccountsDashboard from './pages/accounts/AccountsDashboard';
 import AccountsOrders from './pages/accounts/AccountsOrders';
+import AccountsItems from './pages/accounts/AccountsItems';
 import CrmLogin from './pages/crm/CrmLogin';
 import CrmCustomers from './pages/crm/CrmCustomers';
 import CrmOrders from './pages/crm/CrmOrders';
@@ -123,7 +124,8 @@ const rollerPages = [
 
 const accountsPages = [
   { path: '/accounts/dashboard', element: <AccountsDashboard /> },
-  { path: '/accounts/orders', element: <AccountsOrders /> }
+  { path: '/accounts/orders', element: <AccountsOrders /> },
+  { path: '/accounts/items', element: <AccountsItems /> }
 ];
 
 const crmPages = [

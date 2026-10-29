@@ -3,15 +3,16 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import ConfirmModal from './ConfirmModal';
 import logo1 from '../assets/logo1.png';
-import { LayoutDashboard, ShoppingCart, LogOut } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, Package, LogOut } from 'lucide-react';
 
 const accountsMenu = [
   { path: '/accounts/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/accounts/orders', icon: ShoppingCart, label: 'Orders' }
+  { path: '/accounts/orders', icon: ShoppingCart, label: 'Orders' },
+  { path: '/accounts/items', icon: Package, label: 'Items' }
 ];
 
 // Desk-first shell: the admin console's dark sidebar on a laptop, a compact
-// top bar plus bottom tabs on a phone. Only two destinations, so no "More"
+// top bar plus bottom tabs on a phone. Only three destinations, so no "More"
 // sheet is needed.
 const AccountsLayout = ({ children }) => {
   const { user, logout } = useAuth();
