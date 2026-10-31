@@ -257,18 +257,25 @@ exports.updateSalesman = async (req, res) => {
   }
 };
 
-// Set which customers a salesman may serve and which item categories they may
-// sell (Admin only). null for either list opens it to every one.
+// Set which customers a salesman may serve, which item categories they may
+// sell and which cargos they may use (Admin only). null for any list opens it
+// to every one.
 exports.updateSalesmanPermissions = async (req, res) => {
   try {
     const customers = parseIdList(req.body.allowedCustomers, 'Customers');
     if (customers.error) return res.status(400).json({ success: false, message: customers.error });
     const categories = parseIdList(req.body.allowedCategories, 'Categories');
     if (categories.error) return res.status(400).json({ success: false, message: categories.error });
+    const cargos = parseIdList(req.body.allowedCargos, 'Cargos');
+    if (cargos.error) return res.status(400).json({ success: false, message: cargos.error });
+
+    const lists = [['allowedCustomers', customers.list], ['allowedCategories', categories.list]];
+    // Cargos came later: a request without them leaves them as they are
+    if (req.body.allowedCargos !== undefined) lists.push(['allowedCargos', cargos.list]);
 
     // A list is saved as given; "all" is the field left unset
     const update = {};
-    for (const [field, list] of [['allowedCustomers', customers.list], ['allowedCategories', categories.list]]) {
+    for (const [field, list] of lists) {
       if (list) update.$set = { ...update.$set, [field]: list };
       else update.$unset = { ...update.$unset, [field]: 1 };
     }

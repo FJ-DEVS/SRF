@@ -2,6 +2,7 @@ import React from 'react';
 import { formatStatus } from '../utils/shareUtils';
 import { typeStyle } from '../utils/orderType';
 import logo1 from '../assets/logo1.png';
+import appIcon from '../assets/appIcon.png';
 
 // The order receipt card that gets turned into the shared image — shown in
 // the share modal, and rendered off-screen for the CRM's WhatsApp button
@@ -52,7 +53,17 @@ const OrderShareCard = ({ order }) => {
         </span>
       </div>
 
-      <div className="p-6">
+      <div className="relative p-6">
+        {/* Watermark - laid over the body so it shows through the item rows too */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+          <img
+            src={appIcon}
+            alt=""
+            aria-hidden="true"
+            className="w-1/2 max-h-[85%] object-contain opacity-[0.2] select-none"
+          />
+        </div>
+
         {/* Items - primary focus */}
         <div className="mb-6">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2.5">

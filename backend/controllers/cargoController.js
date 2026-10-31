@@ -2,6 +2,7 @@ const Cargo = require('../models/Cargo');
 const { getIO } = require('../socket');
 const { applySort } = require('../utils/listSort');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
+const { allowedCargoIds } = require('../utils/permissions');
 
 const duplicateNameMessage = (name) => `A cargo named "${String(name).trim()}" already exists`;
 
@@ -143,7 +144,8 @@ exports.updateCargo = async (req, res) => {
   }
 };
 
-// Get all cargo (salesman access)
+// Get all cargo (salesman access). A salesman sees only the cargos they are
+// permitted to use; staff reading the filter options see every one.
 exports.getCargoListForSalesman = async (req, res) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
@@ -152,6 +154,11 @@ exports.getCargoListForSalesman = async (req, res) => {
 
     if (search) {
       query.name = { $regex: search, $options: 'i' };
+    }
+
+    if (req.user.role === 'salesman') {
+      const allowed = await allowedCargoIds(req.user.id);
+      if (allowed) query._id = { $in: allowed };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);

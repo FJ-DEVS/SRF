@@ -1,5 +1,6 @@
 // Who may see and order what. A salesman's permissions name the customers
-// they may serve and the item categories they may sell; a customer's name the
+// they may serve, the item categories they may sell and the cargos they may
+// send orders by; a customer's name the
 // item categories that may be sold to them. A list left unset means
 // "everything" — the default, so every salesman and customer starts with full
 // access and picks up new customers and categories automatically.
@@ -22,12 +23,18 @@ const parseIdList = (value, label) => {
 };
 
 const salesmanPermissions = (salesmanId) =>
-  Salesman.findById(salesmanId).select('allowedCustomers allowedCategories').lean();
+  Salesman.findById(salesmanId).select('allowedCustomers allowedCategories allowedCargos').lean();
 
 // The customer ids a salesman may serve, or null for every customer
 const allowedCustomerIds = async (salesmanId) => {
   const salesman = await salesmanPermissions(salesmanId);
   return salesman?.allowedCustomers ?? null;
+};
+
+// The cargo ids a salesman may send orders by, or null for every cargo
+const allowedCargoIds = async (salesmanId) => {
+  const salesman = await salesmanPermissions(salesmanId);
+  return salesman?.allowedCargos ?? null;
 };
 
 // The category names open to a salesman and / or a customer — both lists
@@ -57,6 +64,7 @@ const firstForbiddenItem = (items, names) =>
 module.exports = {
   parseIdList,
   allowedCustomerIds,
+  allowedCargoIds,
   allowedCategoryNames,
   firstForbiddenItem
 };

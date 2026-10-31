@@ -127,17 +127,19 @@ const Salesmen = () => {
     setPermTarget(salesman);
     setPermOptions(null);
     try {
-      const [customers, categoriesRes] = await Promise.all([
+      const [customers, categoriesRes, cargos] = await Promise.all([
         fetchAll('/customers', { sort: 'name_asc' }),
-        api.get('/categories')
+        api.get('/categories'),
+        fetchAll('/cargo', { sort: 'name_asc' })
       ]);
       setPermOptions({
         customers: customers.map((c) => ({ value: c._id, label: c.name, sub: c.phone })),
-        categories: (categoriesRes.data.data || []).map((c) => ({ value: c._id, label: c.name }))
+        categories: (categoriesRes.data.data || []).map((c) => ({ value: c._id, label: c.name })),
+        cargos: cargos.map((c) => ({ value: c._id, label: c.name }))
       });
     } catch (error) {
       setPermTarget(null);
-      showAlert('Error', error.response?.data?.message || 'Could not load customers and categories', 'error');
+      showAlert('Error', error.response?.data?.message || 'Could not load customers, categories and cargos', 'error');
     }
   };
 
@@ -389,7 +391,7 @@ const Salesmen = () => {
         <PermissionsModal
           key={permTarget._id}
           title={`${permTarget.name} — Permissions`}
-          subtitle="Which customers this salesman can serve, and which item categories they can sell"
+          subtitle="Which customers this salesman can serve, which item categories they can sell, and which cargos they can use"
           loading={!permOptions}
           sections={[
             {
@@ -407,6 +409,14 @@ const Salesmen = () => {
               emptyWarning: 'No categories ticked — this salesman will not see any item.',
               options: permOptions?.categories || [],
               value: permTarget.allowedCategories
+            },
+            {
+              key: 'allowedCargos',
+              label: 'Cargos',
+              allLabel: 'All cargos',
+              emptyWarning: 'No cargos ticked — this salesman can only place orders without a cargo.',
+              options: permOptions?.cargos || [],
+              value: permTarget.allowedCargos
             }
           ]}
           onClose={() => setPermTarget(null)}

@@ -969,6 +969,11 @@ const Orders = () => {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[13px] font-medium text-slate-900">{item.name}</p>
                             <p className="text-[11px] text-slate-400">₹{item.price} · {item.availableQty} in stock</p>
+                            {!selectedOrder && formData.type === 'sell order' && item.quantity > item.availableQty && (
+                              <p className="text-[11px] font-medium text-rose-600">
+                                {item.quantity - item.availableQty} short — the order will be refused and listed under Failed Orders
+                              </p>
+                            )}
                           </div>
                           <input
                             type="number"

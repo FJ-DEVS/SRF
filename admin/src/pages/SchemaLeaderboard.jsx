@@ -319,7 +319,10 @@ const SchemaLeaderboard = () => {
                         <td className="text-right font-semibold text-slate-900">{row.points}</td>
                         <td>
                           {row.tier ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-600">
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-600"
+                              style={row.tierColor ? { backgroundColor: `${row.tierColor}1a`, color: row.tierColor } : undefined}
+                            >
                               <Award className="h-3 w-3" />
                               {row.tier}
                             </span>
@@ -344,7 +347,7 @@ const SchemaLeaderboard = () => {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{row.name}</p>
                       <p className="mt-0.5 truncate text-xs text-slate-400">
-                        {row.tier || 'No tier yet'}
+                        <span style={row.tierColor ? { color: row.tierColor } : undefined}>{row.tier || 'No tier yet'}</span>
                         {row.salesmen?.length > 0 && (
                           <span className="text-slate-300"> · {row.salesmen.map((s) => s.name).join(', ')}</span>
                         )}

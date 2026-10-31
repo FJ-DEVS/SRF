@@ -8,13 +8,14 @@ const DamagedItem = require('../models/DamagedItem');
 const Cargo = require('../models/Cargo');
 const Category = require('../models/Category');
 const Schema = require('../models/Schema');
+const FailedOrder = require('../models/FailedOrder');
 const axios = require('axios');
 const { getIO } = require('../socket');
 const Placement = require('../models/Placement');
 const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 const { itemNameKeyStages, ITEM_NAME_SORTS } = require('../utils/itemNameSort');
-const { allowedCustomerIds, allowedCategoryNames, firstForbiddenItem } = require('../utils/permissions');
+const { allowedCustomerIds, allowedCargoIds, allowedCategoryNames, firstForbiddenItem } = require('../utils/permissions');
 
 // Why a sell order's lines may not go out — an item whose category is not
 // open to the customer, or to the salesman placing it. Undefined when every
@@ -39,6 +40,56 @@ const categoryPermissionError = async (lines, { customerId, salesmanId }, sessio
     }
   }
   return undefined;
+};
+
+// Every line of a sell order measured against the stock on hand now — lines
+// asking for the same item are added together. `short` is what is missing.
+const stockShortfall = async (lines) => {
+  const requested = new Map();
+  for (const line of lines) {
+    const key = String(line.item);
+    requested.set(key, (requested.get(key) || 0) + line.quantity);
+  }
+  const items = await Item.find({ _id: { $in: [...requested.keys()] } }).select('name quantity').lean();
+  const byId = new Map(items.map((i) => [String(i._id), i]));
+  return [...requested].map(([id, quantity]) => {
+    const item = byId.get(id);
+    const available = Math.max(item?.quantity || 0, 0);
+    return {
+      item: id,
+      name: item?.name || 'Deleted item',
+      requested: quantity,
+      available,
+      short: Math.max(quantity - available, 0)
+    };
+  });
+};
+
+// Keep a sell order turned away for want of stock on the failed-orders list.
+// Logging never stands in the way of answering the request.
+const recordFailedOrder = async ({ lines, customerId, cargoId, notes, user }) => {
+  try {
+    const validId = (id) => id && mongoose.Types.ObjectId.isValid(id);
+    const [customer, cargo, salesman] = await Promise.all([
+      validId(customerId) ? Customer.findById(customerId).select('name').lean() : null,
+      validId(cargoId) ? Cargo.findById(cargoId).select('name').lean() : null,
+      user.role === 'salesman' ? Salesman.findById(user.id).select('name').lean() : null
+    ]);
+    await FailedOrder.create({
+      customer: customer?._id || null,
+      customerName: customer?.name || '',
+      cargo: cargo?._id || null,
+      cargoName: cargo?.name || '',
+      createdBy: user.role === 'salesman' ? user.id : null,
+      createdByType: user.role === 'salesman' ? 'salesman' : 'admin',
+      createdByName: user.role === 'salesman' ? salesman?.name || user.name || '' : 'Admin',
+      items: lines,
+      notes: notes || null
+    });
+    getIO().emit('failed_orders_updated');
+  } catch (error) {
+    console.error('Record failed order error:', error);
+  }
 };
 
 // Helper function to send OneSignal notification
@@ -360,6 +411,14 @@ exports.createOrder = async (req, res) => {
           session.endSession();
           return res.status(403).json({ success: false, message: 'You are not permitted to order for this customer' });
         }
+        if (cargo) {
+          const allowedCargos = await allowedCargoIds(salesmanId);
+          if (allowedCargos && !allowedCargos.some((id) => String(id) === String(cargo))) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(403).json({ success: false, message: 'You are not permitted to send orders by this cargo' });
+          }
+        }
       }
       const permissionError = await categoryPermissionError(items, { customerId: customerName, salesmanId }, session);
       if (permissionError) {
@@ -388,14 +447,35 @@ exports.createOrder = async (req, res) => {
           await session.abortTransaction();
           session.endSession();
           if (!existingItem) {
-            return res.status(404).json({ 
-              success: false, 
-              message: `Item with ID ${itemId} not found` 
+            return res.status(404).json({
+              success: false,
+              message: `Item with ID ${itemId} not found`
             });
           }
+
+          // Name every short line, not just this one, and keep the attempt
+          // on the failed-orders list
+          const lines = await stockShortfall(items);
+          const short = lines.filter((l) => l.short > 0);
+          if (short.length === 0) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient stock for "${existingItem.name}". Available: ${existingItem.quantity}, Requested: ${requestedQty}`
+            });
+          }
+          await recordFailedOrder({
+            lines,
+            customerId: customerName,
+            cargoId: cargo,
+            notes,
+            user: req.user
+          });
           return res.status(400).json({
             success: false,
-            message: `Insufficient stock for "${existingItem.name}". Available: ${existingItem.quantity}, Requested: ${requestedQty}`
+            code: 'INSUFFICIENT_STOCK',
+            message: `Insufficient stock for ${short
+              .map((l) => `"${l.name}" (available: ${l.available}, requested: ${l.requested})`)
+              .join(', ')}`
           });
         }
       }

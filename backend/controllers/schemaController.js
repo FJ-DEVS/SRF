@@ -1,4 +1,5 @@
 const Schema = require('../models/Schema');
+const { tiersWithColors, HEX_COLOR } = Schema;
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const Salesman = require('../models/Salesman');
@@ -8,9 +9,9 @@ const { exact, findDuplicate } = require('../utils/duplicateCheck');
 
 const duplicateNameMessage = (name) => `A schema named "${String(name).trim()}" already exists`;
 
-// Sell-order statuses that count as a completed sale for incentive points.
-// Widen this list if partially-completed orders should also earn points.
-const COUNTED_STATUSES = ['delivered'];
+// Sell-order statuses that earn incentive points: an order scores once it is
+// billed, and keeps scoring after delivery.
+const COUNTED_STATUSES = ['billed', 'delivered'];
 
 // --- Helpers -------------------------------------------------------------
 
@@ -30,7 +31,8 @@ const buildTiers = (tiers) =>
     .filter((t) => t && (t.reward || '').trim())
     .map((t) => ({
       pointsRequired: Number(t.pointsRequired) || 0,
-      reward: t.reward.trim()
+      reward: t.reward.trim(),
+      color: HEX_COLOR.test(t.color || '') ? t.color : ''
     }));
 
 // Highest tier whose threshold the customer has reached (null if none).
@@ -144,6 +146,7 @@ const computePointsForSchema = async (schema) => {
 // customer: the assigned one first, then anyone who sold to them in the period.
 const buildLeaderboard = async (schema) => {
   const { totals, sellers } = await computePointsForSchema(schema);
+  const tiers = tiersWithColors(schema.tiers);
   const scoredIds = [...totals.keys()].filter((id) => totals.get(id) > 0);
   if (scoredIds.length === 0) return [];
 
@@ -169,8 +172,8 @@ const buildLeaderboard = async (schema) => {
   return customers
     .map((c) => {
       const points = totals.get(String(c._id)) || 0;
-      const tier = resolveTier(points, schema.tiers);
-      const upcoming = nextTier(points, schema.tiers);
+      const tier = resolveTier(points, tiers);
+      const upcoming = nextTier(points, tiers);
       return {
         customerId: c._id,
         name: c.name,
@@ -182,7 +185,9 @@ const buildLeaderboard = async (schema) => {
         points,
         tier: tier ? tier.reward : null,
         tierPointsRequired: tier ? tier.pointsRequired : null,
+        tierColor: tier ? tier.color : null,
         nextTier: upcoming ? upcoming.reward : null,
+        nextTierPointsRequired: upcoming ? upcoming.pointsRequired : null,
         pointsToNextTier: upcoming ? Math.max(upcoming.pointsRequired - points, 0) : 0
       };
     })
@@ -383,7 +388,7 @@ exports.getSchemaLeaderboard = async (req, res) => {
           runBy: schema.runBy,
           fromDate: schema.fromDate,
           toDate: schema.toDate,
-          tiers: schema.tiers
+          tiers: tiersWithColors(schema.tiers)
         },
         leaderboard: rows
       }
@@ -422,7 +427,7 @@ exports.getMyStatus = async (req, res) => {
         fromDate: schema.fromDate,
         toDate: schema.toDate,
         pointsAllocations: schema.pointsAllocations, // view-only incentive products
-        tiers: schema.tiers,                         // view-only achievement table
+        tiers: tiersWithColors(schema.tiers),        // view-only achievement table
         customers
       });
     }

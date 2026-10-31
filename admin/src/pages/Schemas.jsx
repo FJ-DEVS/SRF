@@ -7,6 +7,7 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import FilterPanel from '../components/FilterPanel';
 import { Search, Plus, Edit2, Trash2, X, Award, Trophy, Gift } from 'lucide-react';
+import { defaultTierColor } from '../utils/tierColors';
 
 const emptyForm = {
   name: '',
@@ -15,7 +16,8 @@ const emptyForm = {
   toDate: '',
   // Points are earned per unit sold of any item in the category
   pointsAllocations: [{ category: '', points: '' }],
-  tiers: [{ pointsRequired: '', reward: '' }],
+  // Each tier's color marks its slab on the sales app leaderboard
+  tiers: [{ pointsRequired: '', reward: '', color: defaultTierColor(0) }],
 };
 
 // yyyy-mm-dd for <input type="date">
@@ -117,7 +119,10 @@ const Schemas = () => {
     });
   };
   const addTier = () =>
-    setFormData((prev) => ({ ...prev, tiers: [...prev.tiers, { pointsRequired: '', reward: '' }] }));
+    setFormData((prev) => ({
+      ...prev,
+      tiers: [...prev.tiers, { pointsRequired: '', reward: '', color: defaultTierColor(prev.tiers.length) }],
+    }));
   const removeTier = (index) =>
     setFormData((prev) => ({ ...prev, tiers: prev.tiers.filter((_, i) => i !== index) }));
 
@@ -132,7 +137,7 @@ const Schemas = () => {
       });
     const tiers = formData.tiers
       .filter((t) => (t.reward || '').trim())
-      .map((t) => ({ pointsRequired: Number(t.pointsRequired) || 0, reward: t.reward.trim() }));
+      .map((t) => ({ pointsRequired: Number(t.pointsRequired) || 0, reward: t.reward.trim(), color: t.color }));
 
     if (allocations.length === 0) {
       showAlert('Missing categories', 'Add at least one category to the points table.', 'error');
@@ -205,8 +210,12 @@ const Schemas = () => {
           : [{ category: '', points: '' }],
       tiers:
         schema.tiers?.length > 0
-          ? schema.tiers.map((t) => ({ pointsRequired: t.pointsRequired, reward: t.reward }))
-          : [{ pointsRequired: '', reward: '' }],
+          ? schema.tiers.map((t, i) => ({
+              pointsRequired: t.pointsRequired,
+              reward: t.reward,
+              color: t.color || defaultTierColor(i),
+            }))
+          : [{ pointsRequired: '', reward: '', color: defaultTierColor(0) }],
     });
     setShowModal(true);
   };
@@ -465,6 +474,19 @@ const Schemas = () => {
                 <div className="space-y-2">
                   {formData.tiers.map((row, index) => (
                     <div key={index} className="flex items-center gap-2">
+                      <label
+                        className="relative !mb-0 h-9 w-9 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-slate-200"
+                        style={{ backgroundColor: row.color }}
+                        title="Slab color in the sales app"
+                      >
+                        <input
+                          type="color"
+                          value={row.color}
+                          onChange={(e) => updateTier(index, 'color', e.target.value)}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          aria-label={`Color for tier ${index + 1}`}
+                        />
+                      </label>
                       <input
                         type="number"
                         min="0"

@@ -16,6 +16,7 @@ import Reorder from './pages/Reorder';
 import ReorderLevels from './pages/ReorderLevels';
 import Cargo from './pages/Cargo';
 import Orders from './pages/Orders';
+import FailedOrders from './pages/FailedOrders';
 import Consolidation from './pages/Consolidation';
 import Schemas from './pages/Schemas';
 import SchemaLeaderboard from './pages/SchemaLeaderboard';
@@ -111,6 +112,7 @@ const adminPages = [
   { path: '/raks', element: <Raks /> },
   { path: '/cargo', element: <Cargo /> },
   { path: '/orders', element: <Orders /> },
+  { path: '/failed-orders', element: <FailedOrders /> },
   { path: '/consolidation', element: <Consolidation /> },
   { path: '/schemas', element: <Schemas /> },
   { path: '/schema-leaderboard', element: <SchemaLeaderboard /> },
