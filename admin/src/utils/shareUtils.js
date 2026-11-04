@@ -1,4 +1,5 @@
 import { typeStyle } from './orderType';
+import { orderCreatorName } from './orderCreator';
 
 /**
  * Format a raw order status (e.g. "cancellation_requested") into a readable label
@@ -27,9 +28,7 @@ export const generateOrderText = (order) => {
   const status = formatStatus(order.status);
   const cargoName = order.cargo?.name || 'No Cargo Assigned';
   const billLine = order.billNumber ? `\nBill No: ${order.billNumber}` : '';
-  const createdBy = order.createdByType === 'admin' 
-    ? 'Admin' 
-    : (order.createdBy?.name || '-');
+  const createdBy = orderCreatorName(order);
   
   const itemsList = order.items
     .map(item => `  • ${item.item?.name || 'Unknown'} - Qty: ${item.quantity}`)

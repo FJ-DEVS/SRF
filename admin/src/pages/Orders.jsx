@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ITEM_NAME_SORT_OPTIONS } from '../utils/sortOptions';
+import { orderCreatorName } from '../utils/orderCreator';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -500,7 +501,7 @@ const Orders = () => {
       'Status': order.status,
       'Bill No': order.billNumber || '-',
       'Cargo': order.cargo?.name || '-',
-      'Created By': order.createdByType === 'admin' ? 'Admin' : (order.createdBy?.name || '-')
+      'Created By': orderCreatorName(order)
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);

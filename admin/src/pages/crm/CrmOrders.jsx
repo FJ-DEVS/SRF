@@ -103,7 +103,11 @@ const deliveryMessage = (order) => {
   const cargo = order.cargo?.name ? ` through ${order.cargo.name}` : '';
   // Bills entered before billedAt was recorded fall back to the last update
   const billedOn = formatDate(order.billedAt || order.updatedAt);
-  return `Thank you for choosing Skydecor Laminates. Kindly confirm the delivery of order placed by ${salesman} for ${customer}. The order was dispatched${cargo} on ${billedOn}. We expect a confirmation from your side.`;
+  // A customer who ordered from the app is thanked for their own order
+  const placed = order.createdByType === 'customer'
+    ? `the order you placed for ${customer}`
+    : `order placed by ${salesman} for ${customer}`;
+  return `Thank you for choosing Skydecor Laminates. Kindly confirm the delivery of ${placed}. The order was dispatched${cargo} on ${billedOn}. We expect a confirmation from your side.`;
 };
 
 const WhatsAppIcon = ({ className = '' }) => (

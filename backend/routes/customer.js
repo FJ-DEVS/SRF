@@ -5,6 +5,10 @@ const authMiddleware = require('../middleware/auth');
 const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 const { roleAuth } = require('../middleware/roleAuth');
 
+// Customer app login (public) and session check — before /:id
+router.post('/login', customerController.loginCustomer);
+router.get('/verify', roleAuth('customer'), customerController.verifyCustomer);
+
 // Salesman routes (read-only) — before /:id
 router.get('/salesman/list', salesmanAuthMiddleware, customerController.getCustomersForSalesman);
 router.get('/salesman/:id', salesmanAuthMiddleware, customerController.getCustomerByIdForSalesman);

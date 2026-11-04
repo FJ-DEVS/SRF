@@ -19,9 +19,11 @@ const orderSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     required: [true, 'Creator is required']
   },
+  // 'customer' — placed by the customer themselves from the app; createdBy is
+  // then their own Customer id, the same one as customerName
   createdByType: {
     type: String,
-    enum: ['admin', 'salesman'],
+    enum: ['admin', 'salesman', 'customer'],
     required: true
   },
   type: {

@@ -42,6 +42,23 @@ const categoryPermissionError = async (lines, { customerId, salesmanId }, sessio
   return undefined;
 };
 
+// How to populate an order's createdBy: a salesman, or a customer who placed
+// the order from the app — with the salesman looking after their shop, whom
+// the app names as "Order by" on the shared image. Office orders carry the
+// string 'Admin' — null.
+const creatorPopulate = (order) => {
+  if (order.createdByType === 'salesman') return { path: 'createdBy', model: 'Salesman', select: '-password' };
+  if (order.createdByType === 'customer') {
+    return {
+      path: 'createdBy',
+      model: 'Customer',
+      select: 'name phone assignedSalesman',
+      populate: { path: 'assignedSalesman', select: 'name phone' }
+    };
+  }
+  return null;
+};
+
 // Every line of a sell order measured against the stock on hand now — lines
 // asking for the same item are added together. `short` is what is missing.
 const stockShortfall = async (lines) => {
@@ -81,8 +98,10 @@ const recordFailedOrder = async ({ lines, customerId, cargoId, notes, user }) =>
       cargo: cargo?._id || null,
       cargoName: cargo?.name || '',
       createdBy: user.role === 'salesman' ? user.id : null,
-      createdByType: user.role === 'salesman' ? 'salesman' : 'admin',
-      createdByName: user.role === 'salesman' ? salesman?.name || user.name || '' : 'Admin',
+      createdByType: ['salesman', 'customer'].includes(user.role) ? user.role : 'admin',
+      createdByName: user.role === 'salesman'
+        ? salesman?.name || user.name || ''
+        : user.role === 'customer' ? `${customer?.name || user.name || ''} (customer)` : 'Admin',
       items: lines,
       notes: notes || null
     });
@@ -249,15 +268,26 @@ exports.createOrder = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { type, items, customerName, cargo, notes } = req.body;
+    const { type, items, cargo, notes } = req.body;
+    const isCustomer = req.user.role === 'customer';
+    // A customer orders for themselves — whatever the body says
+    const customerName = isCustomer ? req.user.id : req.body.customerName;
 
     // Validate that salesman can only create sell orders
     if (req.user.role === 'salesman' && type !== 'sell order') {
       await session.abortTransaction();
       session.endSession();
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Salesmen can only create sell orders' 
+      return res.status(403).json({
+        success: false,
+        message: 'Salesmen can only create sell orders'
+      });
+    }
+    if (isCustomer && type !== 'sell order') {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Customers can only place sell orders'
       });
     }
 
@@ -383,7 +413,11 @@ exports.createOrder = async (req, res) => {
           session.endSession();
           return res.status(400).json({
             success: false,
-            message: 'Cannot create order for blocked customer'
+            code: 'CUSTOMER_BLOCKED',
+            // A customer ordering from the app is told in their own terms
+            message: isCustomer
+              ? 'You are blocked by admin. Please contact your distributor.'
+              : 'Cannot create order for blocked customer'
           });
         }
       } else {
@@ -511,8 +545,8 @@ exports.createOrder = async (req, res) => {
       customerModel,
       cargo: cargo || null,
       notes: notes || null,
-      createdBy: req.user.role === 'salesman' ? req.user.id : 'Admin',
-      createdByType: req.user.role === 'admin' ? 'admin' : 'salesman',
+      createdBy: req.user.role === 'admin' ? 'Admin' : req.user.id,
+      createdByType: req.user.role,
       status: 'pending',
       returnOf,
       restocked
@@ -523,22 +557,23 @@ exports.createOrder = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    // Populate references (conditionally populate createdBy only if it's a salesman)
+    // Populate references (createdBy only when a salesman or customer placed it)
     const populateOptions = [
       { path: 'items.item' },
       { path: 'customerName' },
       { path: 'cargo' },
       { path: 'returnOf', select: 'createdAt billNumber status' }
     ];
-    
-    if (order.createdByType === 'salesman') {
-      populateOptions.unshift({ path: 'createdBy', model: 'Salesman', select: '-password' });
-    }
-    
+
+    const creator = creatorPopulate(order);
+    if (creator) populateOptions.unshift(creator);
+
     await order.populate(populateOptions);
 
     // Send push notification to admin
-    const salesmanName = req.user.role === 'salesman' ? req.user.name : 'Admin';
+    const salesmanName = req.user.role === 'salesman'
+      ? req.user.name
+      : isCustomer ? `${order.customerName?.name || req.user.name} (customer)` : 'Admin';
     await sendPushNotification(
       type === 'return order' ? `Return recorded by ${salesmanName}` : `New order placed by ${salesmanName}`,
       {
@@ -726,6 +761,11 @@ exports.getAllOrders = async (req, res) => {
       if (allowedCustomers) conditions.push({ customerName: { $in: allowedCustomers } });
     }
 
+    // A customer in the app sees the orders they placed themselves
+    if (req.user.role === 'customer') {
+      conditions.push({ createdByType: 'customer', createdBy: req.user.id });
+    }
+
     // Rollers see sell orders from the moment they are queued for rolling
     if (req.user.role === 'roller') {
       conditions.push({ type: 'sell order', status: rollerStatusMatch(status) });
@@ -869,11 +909,10 @@ exports.getAllOrders = async (req, res) => {
       total = await Order.countDocuments(query);
     }
 
-    // Conditionally populate createdBy for salesmen
+    // Conditionally populate createdBy for salesmen and customers
     for (let order of orders) {
-      if (order.createdByType === 'salesman') {
-        await order.populate({ path: 'createdBy', model: 'Salesman', select: '-password' });
-      }
+      const creator = creatorPopulate(order);
+      if (creator) await order.populate(creator);
     }
 
     res.status(200).json({
@@ -904,16 +943,27 @@ exports.getOrder = async (req, res) => {
       .populate('cargo')
       .populate('returnOf', 'createdAt billNumber status');
     
-    // Conditionally populate createdBy if it's a salesman
-    if (order && order.createdByType === 'salesman') {
-      await order.populate({ path: 'createdBy', model: 'Salesman', select: '-password' });
-    }
-    
+    // Conditionally populate createdBy if a salesman or customer placed it
+    const creator = order && creatorPopulate(order);
+    if (creator) await order.populate(creator);
+
     if (!order) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Order not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
       });
+    }
+
+    // Align with getAllOrders: a customer sees only the orders they placed
+    if (req.user.role === 'customer') {
+      const isOwn = order.createdByType === 'customer'
+        && String(order.createdBy?._id ?? order.createdBy) === String(req.user.id);
+      if (!isOwn) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied'
+        });
+      }
     }
 
     // Align with getAllOrders: salesman sees own orders or any "to roll" order
@@ -1368,10 +1418,9 @@ exports.updateOrderStatus = async (req, res) => {
       { path: 'cargo' },
       { path: 'rolledBy', select: 'name username' }
     ];
-    
-    if (order.createdByType === 'salesman') {
-      populateOptions.unshift({ path: 'createdBy', model: 'Salesman', select: '-password' });
-    }
+
+    const creator = creatorPopulate(order);
+    if (creator) populateOptions.unshift(creator);
     
     await order.populate(populateOptions);
 
@@ -1528,10 +1577,9 @@ exports.updateOrder = async (req, res) => {
       .populate('customerName')
       .populate('cargo');
     
-    // Conditionally populate createdBy if it's a salesman
-    if (order && order.createdByType === 'salesman') {
-      await order.populate({ path: 'createdBy', model: 'Salesman', select: '-password' });
-    }
+    // Conditionally populate createdBy if a salesman or customer placed it
+    const creator = order && creatorPopulate(order);
+    if (creator) await order.populate(creator);
 
     if (!order) {
       return res.status(404).json({ 
@@ -1730,6 +1778,13 @@ exports.requestCancellation = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // A customer can only ask to cancel an order they placed themselves
+    if (req.user.role === 'customer' && !(
+      order.createdByType === 'customer' && String(order.createdBy) === String(req.user.id)
+    )) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
     // Only the salesman who created the order can request cancellation
@@ -2292,8 +2347,9 @@ exports.getConsolidationReport = async (req, res) => {
 // two consecutive months, and the incentive points those pieces earn.
 // A sale counts in the month its sell order was placed: sell orders not
 // cancelled, less pieces later sent back on completed returns of those
-// orders. Orders not booked by a current salesman (keyed in by the office, or
-// by a salesman since deleted) are summed in one "Others" row.
+// orders. Orders not booked by a current salesman (keyed in by the office or a
+// customer's own app, or by a salesman since deleted) are summed in one
+// "Others" row.
 // Points are pieces × the category's rate in one schema, applied to both
 // months so they compare — ?schema= picks it; by default the schema running
 // today that ends last. ?month=YYYY-MM picks the later month; last month by
@@ -2368,7 +2424,7 @@ exports.getSalesmanMonthlySales = async (req, res) => {
     const rowsById = new Map(
       salesmen.map((s) => [String(s._id), { salesmanId: s._id, name: s.name, sales: {}, points: blank() }])
     );
-    const others = { salesmanId: null, name: 'Others (office / former salesmen)', sales: {}, points: blank() };
+    const others = { salesmanId: null, name: 'Others (office / customers / former salesmen)', sales: {}, points: blank() };
     const soldCategories = new Set();
 
     for (const order of orders) {

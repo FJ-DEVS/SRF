@@ -10,9 +10,17 @@ import FilterPanel from '../components/FilterPanel';
 import PermissionsModal from '../components/PermissionsModal';
 import { DEFAULT_SORT } from '../utils/sortOptions';
 import {
-  Search, Plus, Edit2, Trash2, X, Eye, ShieldOff, ShieldCheck, UserCircle, Phone,
-  Upload, FileText, MapPin, KeyRound
+  Search, Plus, Edit2, Trash2, X, Eye, EyeOff, ShieldOff, ShieldCheck, UserCircle, Phone,
+  Upload, FileText, MapPin, KeyRound, Smartphone
 } from 'lucide-react';
+
+// Marks a customer who can sign into the mobile app themselves
+const AppLoginBadge = () => (
+  <span className="srf-badge shrink-0 bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200" title="Has an app login">
+    <Smartphone className="h-3 w-3" />
+    App
+  </span>
+);
 
 const PAYMENT_RATING = {
   good:    { label: 'Good Payer',    bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200', dot: 'bg-emerald-500' },
@@ -59,8 +67,11 @@ const Customers = () => {
     paymentRating: 'good',
     assignedSalesman: '',
     gstCertificate: { url: '', key: '', name: '' },
-    locationLink: ''
+    locationLink: '',
+    username: '',
+    password: ''
   });
+  const [showPassword, setShowPassword] = useState(false);
   const certInputRef = useRef(null);
   const [certUploading, setCertUploading] = useState(false);
   // Permission manager: the customer being edited and the categories to
@@ -168,7 +179,9 @@ const Customers = () => {
         key: customer.gstCertificate?.key || '',
         name: customer.gstCertificate?.name || ''
       },
-      locationLink: customer.locationLink || ''
+      locationLink: customer.locationLink || '',
+      username: customer.username || '',
+      password: ''
     });
     setShowModal(true);
   };
@@ -176,9 +189,10 @@ const Customers = () => {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedCustomer(null);
+    setShowPassword(false);
     setFormData({
       name: '', phone: '', gstin: '', isBlocked: false, paymentRating: 'good', assignedSalesman: '',
-      gstCertificate: { url: '', key: '', name: '' }, locationLink: ''
+      gstCertificate: { url: '', key: '', name: '' }, locationLink: '', username: '', password: ''
     });
   };
 
@@ -276,6 +290,10 @@ const Customers = () => {
     },
     { label: 'Location', value: customer?.locationLink || '', type: 'link', linkLabel: 'Open in maps', key: 'locationLink' },
     { label: 'Assigned Salesman', value: customer?.assignedSalesman?.name || '—', type: 'text', key: 'assignedSalesman' },
+    { label: 'App Username', value: customer?.username || 'No app login', type: 'text', key: 'username' },
+    ...(customer?.username
+      ? [{ label: 'App Password', value: customer?.plainPassword || '', type: 'password', key: 'password' }]
+      : []),
     { label: 'Status', value: customer?.isBlocked ? 'Blocked' : 'Active', type: 'badge', key: 'status' },
     { label: 'Payment Rating', value: PAYMENT_RATING[customer?.paymentRating]?.label || 'Good Payer', type: 'text', key: 'paymentRating' },
     { label: 'Created At', value: customer?.createdAt, type: 'datetime', key: 'createdAt' },
@@ -394,8 +412,11 @@ const Customers = () => {
                   {customers.map((customer) => (
                     <tr key={customer._id} className="cursor-pointer" onClick={() => handleViewDetail(customer)}>
                       <td className="max-w-[260px]">
-                        <p className="truncate font-semibold text-slate-900">{customer.name}</p>
-                        {customer.gstin && <p className="truncate text-[11px] text-slate-400">GSTIN: {customer.gstin}</p>}
+                        <div className="flex items-center gap-1.5">
+                          <p className="truncate font-semibold text-slate-900">{customer.name}</p>
+                          {customer.username && <AppLoginBadge />}
+                        </div>
+                        {customer.gstin &&<p className="truncate text-[11px] text-slate-400">GSTIN: {customer.gstin}</p>}
                         <div className="mt-0.5 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           {customer.gstCertificate?.url && (
                             <a
@@ -454,9 +475,12 @@ const Customers = () => {
                         {customer.assignedSalesman?.name && <span className="text-slate-300">· {customer.assignedSalesman.name}</span>}
                       </p>
                     </div>
-                    {customer.isBlocked && (
-                      <span className="srf-badge shrink-0 bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">Blocked</span>
-                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {customer.username && <AppLoginBadge />}
+                      {customer.isBlocked && (
+                        <span className="srf-badge shrink-0 bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">Blocked</span>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <PaymentBadge rating={customer.paymentRating || 'good'} />
@@ -595,18 +619,72 @@ const Customers = () => {
                 </select>
               </div>
 
-              <div>
-                <label className="mb-1.5 block">Assign Salesman <span className="font-normal text-slate-400">(optional)</span></label>
-                <select
-                  value={formData.assignedSalesman}
-                  onChange={(e) => setFormData({ ...formData, assignedSalesman: e.target.value })}
-                  className="w-full"
-                >
-                  <option value="">— No Salesman —</option>
-                  {salesmen.map((s) => (
-                    <option key={s._id} value={s._id}>{s.name} ({s.username})</option>
-                  ))}
-                </select>
+              {/* App login — lets the customer sign into the mobile app and
+                  place their own orders */}
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                <div>
+                  <p className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
+                    <Smartphone className="h-4 w-4 text-sky-600" />
+                    App Login <span className="font-normal text-slate-400">(optional)</span>
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    {selectedCustomer?.username
+                      ? 'Clear the username to remove this customer’s app login.'
+                      : 'Give the customer a username and password to order from the mobile app.'}
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block">Username</label>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    value={formData.username}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block">
+                    Password {selectedCustomer?.username && <span className="font-normal text-slate-400">(leave blank to keep current)</span>}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      required={Boolean(formData.username.trim()) && !selectedCustomer?.username}
+                      minLength={6}
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full !pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block">
+                    Salesman for this shop <span className="font-normal text-slate-400">(optional)</span>
+                  </label>
+                  <select
+                    value={formData.assignedSalesman}
+                    onChange={(e) => setFormData({ ...formData, assignedSalesman: e.target.value })}
+                    className="w-full"
+                  >
+                    <option value="">— No Salesman —</option>
+                    {salesmen.map((s) => (
+                      <option key={s._id} value={s._id}>{s.name} ({s.username})</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Shown as “Order by” on the order images this customer shares from the app.
+                  </p>
+                </div>
               </div>
 
               <label className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">

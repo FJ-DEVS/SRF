@@ -56,9 +56,11 @@ const failedOrderSchema = new mongoose.Schema({
     ref: 'Salesman',
     default: null
   },
+  // A customer's own attempt from the app keeps createdBy null — the customer
+  // is already on the row
   createdByType: {
     type: String,
-    enum: ['admin', 'salesman'],
+    enum: ['admin', 'salesman', 'customer'],
     required: true
   },
   createdByName: {

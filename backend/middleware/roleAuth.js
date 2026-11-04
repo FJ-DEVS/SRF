@@ -3,6 +3,7 @@ const Salesman = require('../models/Salesman');
 const Roller = require('../models/Roller');
 const AccountsManager = require('../models/AccountsManager');
 const CrmManager = require('../models/CrmManager');
+const Customer = require('../models/Customer');
 
 // Roles whose accounts live in the database. Their token is only honoured while
 // the account is still there, so deleting a staff member from the admin panel
@@ -11,14 +12,21 @@ const ACCOUNT_MODELS = {
   salesman: Salesman,
   roller: Roller,
   accounts: AccountsManager,
-  crm: CrmManager
+  crm: CrmManager,
+  customer: Customer
+};
+
+// A customer record outlives its app login — the admin can take the login away
+// and keep the customer — so for them it is the login that has to be there
+const ACCOUNT_FILTERS = {
+  customer: { username: { $exists: true, $nin: [null, ''] } }
 };
 
 const isAccountActive = async (decoded) => {
   const Model = ACCOUNT_MODELS[decoded.role];
   if (!Model) return true; // admin credentials live in .env — nothing to look up
   if (!decoded.id) return false;
-  return Boolean(await Model.exists({ _id: decoded.id }));
+  return Boolean(await Model.exists({ _id: decoded.id, ...ACCOUNT_FILTERS[decoded.role] }));
 };
 
 // roleAuth('admin', 'roller') -> middleware allowing either role

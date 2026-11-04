@@ -4,6 +4,7 @@ import { formatStatus } from './shareUtils';
 import { typeStyle } from './orderType';
 import { orderQty } from './orderMath';
 import logo1 from '../assets/logo1.png';
+import { orderCreatorName } from './orderCreator';
 
 const MARGIN = 28;
 const HEADER_HEIGHT = 64;
@@ -33,9 +34,7 @@ export const downloadOrderPdf = async (order) => {
   const orderType = typeStyle(order.type).label;
   const customerLabel = order.type === 'purchase order' ? 'Vendor' : 'Customer';
   const customerName = order.customerName?.name || '-';
-  const createdBy = order.createdByType === 'admin'
-    ? 'Admin'
-    : (order.createdBy?.name || '-');
+  const createdBy = orderCreatorName(order);
   const items = order.items || [];
   const generatedOn = new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' });
 

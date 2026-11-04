@@ -1,4 +1,5 @@
 const Salesman = require('../models/Salesman');
+const Customer = require('../models/Customer');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
@@ -86,9 +87,13 @@ exports.createSalesman = async (req, res) => {
   try {
     const { name, username, password, phone } = req.body;
 
-    // Usernames are stored lowercase, so the lookup has to ignore case too
-    const existingSalesman = await findDuplicate(Salesman, { username: exact(username) });
-    if (existingSalesman) {
+    // Usernames are stored lowercase, so the lookup has to ignore case too.
+    // Customer app logins share the same login screen, so theirs count too.
+    const [existingSalesman, existingCustomer] = await Promise.all([
+      findDuplicate(Salesman, { username: exact(username) }),
+      findDuplicate(Customer, { username: exact(username) })
+    ]);
+    if (existingSalesman || existingCustomer) {
       return res.status(400).json({ 
         success: false, 
         message: 'Username already exists' 
@@ -211,12 +216,11 @@ exports.updateSalesman = async (req, res) => {
     if (phone) updateData.phone = phone;
 
     if (username) {
-      const existingSalesman = await findDuplicate(
-        Salesman,
-        { username: exact(username) },
-        req.params.id
-      );
-      if (existingSalesman) {
+      const [existingSalesman, existingCustomer] = await Promise.all([
+        findDuplicate(Salesman, { username: exact(username) }, req.params.id),
+        findDuplicate(Customer, { username: exact(username) })
+      ]);
+      if (existingSalesman || existingCustomer) {
         return res.status(400).json({ success: false, message: 'Username already exists' });
       }
     }

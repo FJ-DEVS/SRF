@@ -2,11 +2,15 @@ const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
 const authMiddleware = require('../middleware/auth');
-const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 const { roleAuth } = require('../middleware/roleAuth');
 
-// Admin + salesman (deleted salesman accounts are rejected by roleAuth)
-const anyAuthMiddleware = roleAuth('admin', 'salesman');
+// Placing an order and asking to cancel one: admin, salesmen and customers
+// signed into the app (deleted accounts are rejected by roleAuth). The
+// controller pins salesmen to sell orders and customers to their own.
+const placeAuthMiddleware = roleAuth('admin', 'salesman', 'customer');
+
+// The mobile app's list/detail: salesmen and customers
+const appAuthMiddleware = roleAuth('salesman', 'customer');
 
 // Reading orders is also open to accounts managers, who see every order but
 // never create, edit or delete one
@@ -33,9 +37,10 @@ router.get('/stats', roleAuth('admin', 'accounts'), orderController.getDashboard
 router.get('/consolidation', authMiddleware, orderController.getConsolidationReport);
 router.get('/consolidation/salesmen', authMiddleware, orderController.getSalesmanMonthlySales);
 
-// Salesman-only list/detail (same controller rules as GET / and GET /:id for role salesman)
-router.get('/salesman/list', salesmanAuthMiddleware, orderController.getAllOrders);
-router.get('/salesman/:id', salesmanAuthMiddleware, orderController.getOrder);
+// App list/detail (same controller rules as GET / and GET /:id for role
+// salesman; customers see only the orders they placed themselves)
+router.get('/salesman/list', appAuthMiddleware, orderController.getAllOrders);
+router.get('/salesman/:id', appAuthMiddleware, orderController.getOrder);
 
 // Roller-only list/detail — the controller pins these to sell orders queued for rolling
 router.get('/roller/list', rollerAuthMiddleware, orderController.getAllOrders);
@@ -54,7 +59,7 @@ router.get('/:id/rak-allocation', roleAuth('admin', 'roller'), orderController.g
 router.get('/:id/returnable', authMiddleware, orderController.getReturnable);
 
 // Orders - Both admin and salesman can access (with restrictions in controller)
-router.post('/', anyAuthMiddleware, orderController.createOrder);
+router.post('/', placeAuthMiddleware, orderController.createOrder);
 router.get('/', readAuthMiddleware, orderController.getAllOrders);
 router.get('/:id', readAuthMiddleware, orderController.getOrder);
 
@@ -65,7 +70,7 @@ router.put('/:id/status', statusAuthMiddleware, orderController.updateOrderStatu
 router.put('/:id/revert-status', roleAuth('admin', 'roller'), orderController.revertOrderStatus);
 
 // Cancellation workflow
-router.post('/:id/cancel-request', anyAuthMiddleware, orderController.requestCancellation);
+router.post('/:id/cancel-request', placeAuthMiddleware, orderController.requestCancellation);
 router.put('/:id/cancel-approve', cancelApproveAuthMiddleware, orderController.approveCancellation);
 router.put('/:id/cancel-reject', authMiddleware, orderController.rejectCancellation);
 

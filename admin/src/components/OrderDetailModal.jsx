@@ -4,6 +4,7 @@ import TypeBadge from './TypeBadge';
 import BillBadge from './BillBadge';
 import { X, Package, Truck, Layers, IndianRupee, Undo2 } from 'lucide-react';
 import { orderTotal, orderQty, formatMoney, formatDateTime } from '../utils/orderMath';
+import { orderCreatorName } from '../utils/orderCreator';
 
 const Stat = ({ icon, label, value, sub, accent = false, muted = false }) => {
   const Icon = icon;
@@ -185,7 +186,7 @@ const OrderDetailModal = ({ isOpen, onClose, order, actions = null }) => {
             <span>
               Created by{' '}
               <span className="font-semibold text-slate-700">
-                {order.createdByType === 'admin' ? 'Admin' : (order.createdBy?.name || '—')}
+                {orderCreatorName(order, '—')}
               </span>
             </span>
           </div>

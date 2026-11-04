@@ -2,12 +2,12 @@ const express = require('express');
 const router = express.Router();
 const cargoController = require('../controllers/cargoController');
 const authMiddleware = require('../middleware/auth');
-const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 const { roleAuth } = require('../middleware/roleAuth');
 
-// Salesman routes (read-only) — before /:id
-router.get('/salesman/list', salesmanAuthMiddleware, cargoController.getCargoListForSalesman);
-router.get('/salesman/:id', salesmanAuthMiddleware, cargoController.getCargoByIdForSalesman);
+// Mobile app routes (read-only), salesmen and customers — before /:id
+const appAuthMiddleware = roleAuth('salesman', 'customer');
+router.get('/salesman/list', appAuthMiddleware, cargoController.getCargoListForSalesman);
+router.get('/salesman/:id', appAuthMiddleware, cargoController.getCargoByIdForSalesman);
 
 // Cargo names for the order-list filters of every staff panel (read-only)
 router.get('/options', roleAuth('admin', 'accounts', 'crm', 'roller'), cargoController.getCargoListForSalesman);

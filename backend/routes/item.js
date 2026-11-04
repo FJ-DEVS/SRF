@@ -2,12 +2,14 @@ const express = require('express');
 const router = express.Router();
 const itemController = require('../controllers/itemController');
 const authMiddleware = require('../middleware/auth');
-const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 const { roleAuth } = require('../middleware/roleAuth');
 
-// Salesman routes (read-only) — must be before /:id to avoid conflict
-router.get('/salesman/list', salesmanAuthMiddleware, itemController.getItemsForSalesman);
-router.get('/salesman/:id', salesmanAuthMiddleware, itemController.getItemByIdForSalesman);
+// Mobile app routes (read-only) — must be before /:id to avoid conflict.
+// Customers signed into the app read the same catalogue, narrowed to the
+// categories open to them.
+const appAuthMiddleware = roleAuth('salesman', 'customer');
+router.get('/salesman/list', appAuthMiddleware, itemController.getItemsForSalesman);
+router.get('/salesman/:id', appAuthMiddleware, itemController.getItemByIdForSalesman);
 
 // Roller routes (read-only) — used by the item placement screen
 router.get('/roller/list', roleAuth('roller'), itemController.getItemsForSalesman);

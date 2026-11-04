@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const customerSchema = new mongoose.Schema({
   phone: {
@@ -49,6 +50,28 @@ const customerSchema = new mongoose.Schema({
     type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
     default: undefined
   },
+  // App login, created by the admin. Optional — a customer without a username
+  // simply cannot sign in. Sparse so the many customers with no login do not
+  // collide on the unique index. The password fields are never sent out unless
+  // asked for (the admin panel shows plainPassword, as it does for salesmen).
+  username: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    unique: true,
+    sparse: true,
+    default: undefined
+  },
+  password: {
+    type: String,
+    select: false,
+    default: undefined
+  },
+  plainPassword: {
+    type: String,
+    select: false,
+    default: undefined
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -56,6 +79,11 @@ const customerSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+customerSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) return false;
+  return await bcrypt.compare(candidatePassword, this.password);
+};
 
 module.exports = mongoose.model('Customer', customerSchema);
 

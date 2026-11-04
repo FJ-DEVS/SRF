@@ -249,6 +249,12 @@ exports.getItemsForSalesman = async (req, res) => {
       if (allowed) conditions.push({ category: { $in: allowed } });
     }
 
+    // A customer in the app sees only the categories that may be sold to them
+    if (req.user.role === 'customer') {
+      const allowed = await allowedCategoryNames({ customerId: req.user.id });
+      if (allowed) conditions.push({ category: { $in: allowed } });
+    }
+
     if (search) {
       conditions.push({
         $or: [
@@ -297,8 +303,10 @@ exports.getItemByIdForSalesman = async (req, res) => {
   try {
     let item = await Item.findById(req.params.id).select('name price quantity category');
 
-    if (item && req.user.role === 'salesman') {
-      const allowed = await allowedCategoryNames({ salesmanId: req.user.id });
+    if (item && (req.user.role === 'salesman' || req.user.role === 'customer')) {
+      const allowed = await allowedCategoryNames(
+        req.user.role === 'salesman' ? { salesmanId: req.user.id } : { customerId: req.user.id }
+      );
       if (allowed && !allowed.includes(item.category || '')) item = null;
     }
 

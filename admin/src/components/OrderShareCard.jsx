@@ -3,6 +3,7 @@ import { formatStatus } from '../utils/shareUtils';
 import { typeStyle } from '../utils/orderType';
 import logo1 from '../assets/logo1.png';
 import appIcon from '../assets/appIcon.png';
+import { orderCreatorName } from '../utils/orderCreator';
 
 // The order receipt card that gets turned into the shared image — shown in
 // the share modal, and rendered off-screen for the CRM's WhatsApp button
@@ -16,9 +17,7 @@ const OrderShareCard = ({ order }) => {
     month: 'long',
     day: 'numeric'
   });
-  const createdBy = order.createdByType === 'admin'
-    ? 'Admin'
-    : (order.createdBy?.name || '-');
+  const createdBy = orderCreatorName(order);
   const cargoName = order.cargo?.name || 'No Cargo Assigned';
   const isCargoAssigned = !!order.cargo?.name;
   // const statusColor = STATUS_COLORS[order.status] || STATUS_COLORS.cancelled;
