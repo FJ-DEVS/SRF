@@ -734,6 +734,91 @@ exports.markRollerCustomerSeen = async (req, res) => {
   }
 };
 
+// A roller's note: the day it is about and what to remember. The day comes in
+// as YYYY-MM-DD from a date picker and is kept as that day's UTC midnight, so
+// it reads back as the same day wherever it is shown.
+const parseRollerNote = (body = {}) => {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(body.date || '') ? new Date(`${body.date}T00:00:00Z`) : null;
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!date || isNaN(date)) return { error: 'Pick a date for the note' };
+  if (!text) return { error: 'Write something in the note' };
+  if (text.length > 500) return { error: 'Keep the note under 500 characters' };
+  return { date, text };
+};
+
+// Every note change answers with the order's notes as they now stand, and
+// tells every open chat to refresh. The order's updatedAt is left alone since
+// nothing about the order itself changed.
+const sendRollerNotes = async (res, order, status = 200) => {
+  await order.populate('rollerNotes.createdBy', 'name username');
+  getIO().emit('orders_updated');
+  res.status(status).json({ success: true, data: order.rollerNotes });
+};
+
+const validIds = (...ids) => ids.every((id) => mongoose.Types.ObjectId.isValid(id));
+
+exports.addRollerNote = async (req, res) => {
+  try {
+    if (!validIds(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    const note = parseRollerNote(req.body);
+    if (note.error) return res.status(400).json({ success: false, message: note.error });
+
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...rollerVisibleQuery },
+      { $push: { rollerNotes: { date: note.date, text: note.text, createdBy: req.user.id } } },
+      { new: true, timestamps: false }
+    ).select('rollerNotes');
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    await sendRollerNotes(res, order, 201);
+  } catch (error) {
+    console.error('Add roller note error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+exports.updateRollerNote = async (req, res) => {
+  try {
+    if (!validIds(req.params.id, req.params.noteId)) {
+      return res.status(404).json({ success: false, message: 'Note not found' });
+    }
+    const note = parseRollerNote(req.body);
+    if (note.error) return res.status(400).json({ success: false, message: note.error });
+
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...rollerVisibleQuery, 'rollerNotes._id': req.params.noteId },
+      { $set: { 'rollerNotes.$.date': note.date, 'rollerNotes.$.text': note.text } },
+      { new: true, timestamps: false }
+    ).select('rollerNotes');
+    // Most likely another roller removed it in the meantime
+    if (!order) return res.status(404).json({ success: false, message: 'This note no longer exists' });
+    await sendRollerNotes(res, order);
+  } catch (error) {
+    console.error('Update roller note error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// Removing a note that is already gone still succeeds — the roller wanted it gone
+exports.deleteRollerNote = async (req, res) => {
+  try {
+    if (!validIds(req.params.id, req.params.noteId)) {
+      return res.status(404).json({ success: false, message: 'Note not found' });
+    }
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...rollerVisibleQuery },
+      { $pull: { rollerNotes: { _id: req.params.noteId } } },
+      { new: true, timestamps: false }
+    ).select('rollerNotes');
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    await sendRollerNotes(res, order);
+  } catch (error) {
+    console.error('Delete roller note error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 // Get all orders
 exports.getAllOrders = async (req, res) => {
   try {
@@ -886,6 +971,7 @@ exports.getAllOrders = async (req, res) => {
         .populate('customerName')
         .populate('cargo')
         .populate('rolledBy', 'name username')
+        .populate('rollerNotes.createdBy', 'name username')
         .populate('returnOf', 'createdAt billNumber status');
       const byId = new Map(found.map((o) => [String(o._id), o]));
       orders = ids.map((id) => byId.get(String(id))).filter(Boolean);
@@ -895,6 +981,7 @@ exports.getAllOrders = async (req, res) => {
         .populate('customerName')
         .populate('cargo')
         .populate('rolledBy', 'name username')
+        .populate('rollerNotes.createdBy', 'name username')
         .populate('returnOf', 'createdAt billNumber status')
         .sort(sortSpec)
         .skip(skip)
@@ -902,9 +989,11 @@ exports.getAllOrders = async (req, res) => {
       total = await Order.countDocuments(query);
     }
 
-    // Conditionally populate createdBy for salesmen and customers
+    // Conditionally populate createdBy for salesmen and customers. Rollers
+    // never see who created an order, and this is one round trip per order,
+    // so they skip it.
     for (let order of orders) {
-      const creator = creatorPopulate(order);
+      const creator = req.user.role !== 'roller' && creatorPopulate(order);
       if (creator) await order.populate(creator);
     }
 
