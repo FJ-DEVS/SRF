@@ -150,10 +150,37 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: null,
     trim: true
-  }
+  },
+  // The rollers' own notes on the order, shown on it in their chat: the day a
+  // note is about (kept as that day's UTC midnight) and what to remember.
+  // Shared by all rollers — any of them can add, edit or remove one.
+  rollerNotes: [{
+    date: {
+      type: Date,
+      required: [true, 'Note date is required']
+    },
+    text: {
+      type: String,
+      required: [true, 'Note text is required'],
+      trim: true,
+      maxlength: [500, 'Note cannot be longer than 500 characters']
+    },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Roller',
+      default: null
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }]
 }, {
   timestamps: true
 });
+
+// The roller's chat reads one customer's orders newest first, a page at a time
+orderSchema.index({ customerName: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);
 

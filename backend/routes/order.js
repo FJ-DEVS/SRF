@@ -48,6 +48,11 @@ router.get('/roller/customers', rollerAuthMiddleware, orderController.getRollerC
 router.put('/roller/customers/:customerId/seen', rollerAuthMiddleware, orderController.markRollerCustomerSeen);
 router.get('/roller/:id', rollerAuthMiddleware, orderController.getOrder);
 
+// The rollers' own dated notes on an order
+router.post('/roller/:id/notes', rollerAuthMiddleware, orderController.addRollerNote);
+router.put('/roller/:id/notes/:noteId', rollerAuthMiddleware, orderController.updateRollerNote);
+router.delete('/roller/:id/notes/:noteId', rollerAuthMiddleware, orderController.deleteRollerNote);
+
 // CRM-only list — the controller pins it to billed and delivered sell orders
 router.get('/crm/list', crmAuthMiddleware, orderController.getAllOrders);
 

@@ -5,14 +5,17 @@ import useCargoOptions from '../../utils/useCargoOptions';
 import RakAllocationModal from '../../components/RakAllocationModal';
 import AlertModal from '../../components/AlertModal';
 import ConfirmModal from '../../components/ConfirmModal';
+import OrderNotesModal from '../../components/OrderNotesModal';
+import { noteDayFull, noteDayLabel, sortNotes } from '../../utils/rollerNotes';
 import {
-  Search, CircleCheck, ClipboardCheck, X, ArrowLeft, Truck, Undo2, UserCheck, MessageSquare, Package, Receipt
+  Search, CircleCheck, ClipboardCheck, X, ArrowLeft, Truck, Undo2, UserCheck, MessageSquare, Package, Receipt,
+  NotebookPen, CalendarDays
 } from 'lucide-react';
 
 // How many customers the chat list shows before "Load more", and how many
 // orders a chat pulls in per page as the roller scrolls up
 const CUSTOMER_STEP = 30;
-const ORDER_STEP = 20;
+const ORDER_STEP = 15;
 // The API caps a page at 100 — the most a live refresh can re-read at once
 const MAX_LIMIT = 100;
 // Safety-net poll in case a socket event is missed (dropped connection, sleeping tab)
@@ -382,12 +385,14 @@ const EmptyPane = ({ icon, title, text, iconClass }) => {
 
 // One order as a chat message, with the button for whatever the roller can
 // do next — roll it, or take a roll back. Anything past "rolled" is out of
-// the roller's hands, so it only shows its status.
-const OrderBubble = ({ order, onRoll, onRevert }) => {
+// the roller's hands, so it only shows its status. The rollers' own notes
+// show on it, and the button beside it opens them.
+const OrderBubble = ({ order, onRoll, onRevert, onNotes }) => {
   const isNew = order.status === 'to roll' && !order.rollerSeenAt;
+  const notes = sortNotes(order.rollerNotes);
   return (
-    <div className="flex">
-      <div className="w-full max-w-[560px] rounded-2xl rounded-tl-sm bg-white p-3.5 shadow-sm ring-1 ring-black/5">
+    <div className="flex items-center gap-2">
+      <div className="w-full min-w-0 max-w-[560px] rounded-2xl rounded-tl-sm bg-white p-3.5 shadow-sm ring-1 ring-black/5">
         <div className="flex items-center gap-2">
           <p className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-slate-500">
             <Truck className="h-3.5 w-3.5 shrink-0 text-slate-400" />
@@ -401,6 +406,18 @@ const OrderBubble = ({ order, onRoll, onRevert }) => {
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[12.5px] text-amber-700">
             <span className="font-semibold">Note:</span> {order.notes}
           </p>
+        )}
+
+        {notes.length > 0 && (
+          <button type="button" onClick={() => onNotes(order)} className="mt-2 block w-full space-y-1 text-left" title="Open notes">
+            {notes.map((note) => (
+              <span key={note._id} className="flex items-start gap-2 rounded-lg bg-indigo-50/70 px-3 py-1.5 text-[12.5px] text-indigo-900">
+                <CalendarDays className="mt-[3px] h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                <span className="shrink-0 font-semibold" title={noteDayFull(note.date)}>{noteDayLabel(note.date)}</span>
+                <span className="min-w-0 whitespace-pre-wrap break-words">{note.text}</span>
+              </span>
+            ))}
+          </button>
         )}
 
         <div className="mt-2 divide-y divide-slate-100 rounded-lg bg-slate-50/70 px-3">
@@ -446,6 +463,21 @@ const OrderBubble = ({ order, onRoll, onRevert }) => {
           <span className="ml-auto text-[11px] text-slate-400" title={fullStamp(order.createdAt)}>{timeOf(new Date(order.createdAt))}</span>
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={() => onNotes(order)}
+        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
+        aria-label={notes.length ? `Notes (${notes.length})` : 'Add a note'}
+        title={notes.length ? 'Notes' : 'Add a note'}
+      >
+        <NotebookPen className="h-4 w-4" />
+        {notes.length > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white">
+            {notes.length}
+          </span>
+        )}
+      </button>
     </div>
   );
 };
@@ -460,6 +492,9 @@ const ChatPane = ({ customer, cargo, onBack }) => {
 
   const [rollOrder, setRollOrder] = useState(null);
   const [revertOrder, setRevertOrder] = useState(null);
+  // Read from the chat so notes other rollers add show up while it is open
+  const [notesOrderId, setNotesOrderId] = useState(null);
+  const notesOrder = chat.orders.find((o) => o._id === notesOrderId);
   const [submitting, setSubmitting] = useState(false);
   const [alertConfig, setAlertConfig] = useState(null);
   const showAlert = (title, message, type = 'error') => setAlertConfig({ title, message, type });
@@ -580,7 +615,7 @@ const ChatPane = ({ customer, cargo, onBack }) => {
                     </span>
                   </div>
                 )}
-                <OrderBubble order={order} onRoll={setRollOrder} onRevert={setRevertOrder} />
+                <OrderBubble order={order} onRoll={setRollOrder} onRevert={setRevertOrder} onNotes={(o) => setNotesOrderId(o._id)} />
               </React.Fragment>
             );
           })}
@@ -604,6 +639,14 @@ const ChatPane = ({ customer, cargo, onBack }) => {
         message='It goes back to "to roll" and its stock is put back on the raks it came off.'
         type="warning"
         confirmLabel="Revert"
+      />
+
+      <OrderNotesModal
+        isOpen={Boolean(notesOrder)}
+        onClose={() => setNotesOrderId(null)}
+        order={notesOrder}
+        subtitle={notesOrder && `${customer.name} · ${fullStamp(notesOrder.createdAt)} · Qty ${totalQty(notesOrder)}`}
+        onChange={(rollerNotes) => chat.patchOrder(notesOrderId, { rollerNotes })}
       />
 
       <AlertModal
@@ -638,7 +681,7 @@ const RollerOrders = () => {
     if (!currentId || currentUnseen === 0) return;
     setCustomers((customers) => customers.map((c) => (c._id === currentId ? { ...c, unseenCount: 0 } : c)));
     // Only the orders the chat shows are marked — with a cargo picked, that cargo's
-    api.put(`/orders/roller/customers/${currentId}/seen`, null, { params: { cargo } })
+    api.put(`/orders/roller/customers/${currentId}/seen`, {}, { params: { cargo } })
       .catch((error) => console.error('Error marking orders seen:', error));
   }, [currentId, currentUnseen, setCustomers, cargo]);
 
