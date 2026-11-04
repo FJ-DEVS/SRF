@@ -134,7 +134,7 @@ exports.verifyCustomer = (req, res) => {
 // Create customer
 exports.createCustomer = async (req, res) => {
   try {
-    const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink } = req.body;
+    const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink, shopSalesmanName } = req.body;
 
     // Phone number is the customer's identity — two records sharing one is a duplicate
     if (phone && !isPlaceholderPhone(phone)) {
@@ -157,6 +157,7 @@ exports.createCustomer = async (req, res) => {
       assignedSalesman: assignedSalesman || null,
       gstCertificate: normaliseCertificate(gstCertificate),
       locationLink: (locationLink || '').trim(),
+      shopSalesmanName: (shopSalesmanName || '').trim(),
       ...login.set
     });
 
@@ -272,7 +273,8 @@ exports.getCustomer = async (req, res) => {
 exports.updateCustomer = async (req, res) => {
   try {
     const {
-      phone, name, gstin, isBlocked, paymentRating, assignedSalesman, gstCertificate, locationLink
+      phone, name, gstin, isBlocked, paymentRating, assignedSalesman, gstCertificate, locationLink,
+      shopSalesmanName
     } = req.body;
 
     const updateData = {};
@@ -284,6 +286,7 @@ exports.updateCustomer = async (req, res) => {
     if (assignedSalesman !== undefined) updateData.assignedSalesman = assignedSalesman || null;
     if (gstCertificate !== undefined) updateData.gstCertificate = normaliseCertificate(gstCertificate);
     if (locationLink !== undefined) updateData.locationLink = (locationLink || '').trim();
+    if (shopSalesmanName !== undefined) updateData.shopSalesmanName = (shopSalesmanName || '').trim();
 
     if (phone !== undefined && phone && !isPlaceholderPhone(phone)) {
       const clash = await findDuplicate(Customer, { phone: exact(phone) }, req.params.id);

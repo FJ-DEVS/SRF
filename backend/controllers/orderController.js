@@ -43,19 +43,12 @@ const categoryPermissionError = async (lines, { customerId, salesmanId }, sessio
 };
 
 // How to populate an order's createdBy: a salesman, or a customer who placed
-// the order from the app — with the salesman looking after their shop, whom
-// the app names as "Order by" on the shared image. Office orders carry the
-// string 'Admin' — null.
+// the order from the app — with the name of the salesman at their own shop,
+// which the app shows as "Order by" on the shared image. Office orders carry
+// the string 'Admin' — null.
 const creatorPopulate = (order) => {
   if (order.createdByType === 'salesman') return { path: 'createdBy', model: 'Salesman', select: '-password' };
-  if (order.createdByType === 'customer') {
-    return {
-      path: 'createdBy',
-      model: 'Customer',
-      select: 'name phone assignedSalesman',
-      populate: { path: 'assignedSalesman', select: 'name phone' }
-    };
-  }
+  if (order.createdByType === 'customer') return { path: 'createdBy', model: 'Customer', select: 'name phone shopSalesmanName' };
   return null;
 };
 

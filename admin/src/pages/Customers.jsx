@@ -69,7 +69,8 @@ const Customers = () => {
     gstCertificate: { url: '', key: '', name: '' },
     locationLink: '',
     username: '',
-    password: ''
+    password: '',
+    shopSalesmanName: ''
   });
   const [showPassword, setShowPassword] = useState(false);
   const certInputRef = useRef(null);
@@ -181,7 +182,8 @@ const Customers = () => {
       },
       locationLink: customer.locationLink || '',
       username: customer.username || '',
-      password: ''
+      password: '',
+      shopSalesmanName: customer.shopSalesmanName || ''
     });
     setShowModal(true);
   };
@@ -192,7 +194,8 @@ const Customers = () => {
     setShowPassword(false);
     setFormData({
       name: '', phone: '', gstin: '', isBlocked: false, paymentRating: 'good', assignedSalesman: '',
-      gstCertificate: { url: '', key: '', name: '' }, locationLink: '', username: '', password: ''
+      gstCertificate: { url: '', key: '', name: '' }, locationLink: '', username: '', password: '',
+      shopSalesmanName: ''
     });
   };
 
@@ -294,6 +297,7 @@ const Customers = () => {
     ...(customer?.username
       ? [{ label: 'App Password', value: customer?.plainPassword || '', type: 'password', key: 'password' }]
       : []),
+    { label: 'Shop Salesman', value: customer?.shopSalesmanName || '—', type: 'text', key: 'shopSalesmanName' },
     { label: 'Status', value: customer?.isBlocked ? 'Blocked' : 'Active', type: 'badge', key: 'status' },
     { label: 'Payment Rating', value: PAYMENT_RATING[customer?.paymentRating]?.label || 'Good Payer', type: 'text', key: 'paymentRating' },
     { label: 'Created At', value: customer?.createdAt, type: 'datetime', key: 'createdAt' },
@@ -619,6 +623,20 @@ const Customers = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="mb-1.5 block">Assign Salesman <span className="font-normal text-slate-400">(optional)</span></label>
+                <select
+                  value={formData.assignedSalesman}
+                  onChange={(e) => setFormData({ ...formData, assignedSalesman: e.target.value })}
+                  className="w-full"
+                >
+                  <option value="">— No Salesman —</option>
+                  {salesmen.map((s) => (
+                    <option key={s._id} value={s._id}>{s.name} ({s.username})</option>
+                  ))}
+                </select>
+              </div>
+
               {/* App login — lets the customer sign into the mobile app and
                   place their own orders */}
               <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
@@ -669,18 +687,15 @@ const Customers = () => {
                 </div>
                 <div>
                   <label className="mb-1.5 block">
-                    Salesman for this shop <span className="font-normal text-slate-400">(optional)</span>
+                    Shop Salesman Name <span className="font-normal text-slate-400">(optional)</span>
                   </label>
-                  <select
-                    value={formData.assignedSalesman}
-                    onChange={(e) => setFormData({ ...formData, assignedSalesman: e.target.value })}
+                  <input
+                    type="text"
+                    value={formData.shopSalesmanName}
+                    onChange={(e) => setFormData({ ...formData, shopSalesmanName: e.target.value })}
                     className="w-full"
-                  >
-                    <option value="">— No Salesman —</option>
-                    {salesmen.map((s) => (
-                      <option key={s._id} value={s._id}>{s.name} ({s.username})</option>
-                    ))}
-                  </select>
+                    placeholder="The salesman at the customer's shop"
+                  />
                   <p className="mt-1 text-[11px] text-slate-400">
                     Shown as “Order by” on the order images this customer shares from the app.
                   </p>

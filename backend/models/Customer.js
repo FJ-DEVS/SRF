@@ -72,6 +72,14 @@ const customerSchema = new mongoose.Schema({
     select: false,
     default: undefined
   },
+  // The salesman at the customer's own shop — typed in by the admin, not one
+  // of our salesmen. Named as "Order by" on the order images the customer
+  // shares from the app.
+  shopSalesmanName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now
