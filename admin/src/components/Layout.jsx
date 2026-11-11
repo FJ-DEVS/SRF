@@ -22,6 +22,7 @@ import {
   Calculator,
   Headset,
   DatabaseBackup,
+  Settings as SettingsIcon,
   LogOut,
   MoreHorizontal,
   X
@@ -46,6 +47,7 @@ const menuItems = [
   { path: '/schemas', icon: Award, label: 'Schema' },
   { path: '/schema-leaderboard', icon: Trophy, label: 'Leaderboard' },
   { path: '/database', icon: DatabaseBackup, label: 'Database' },
+  { path: '/settings', icon: SettingsIcon, label: 'Settings' },
 ];
 
 // Mobile bottom bar: first 4 items get a tab, the rest live in the "More" sheet

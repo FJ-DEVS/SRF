@@ -1,9 +1,14 @@
 // Who may see and order what. A salesman's permissions name the customers
 // they may serve, the item categories they may sell and the cargos they may
-// send orders by; a customer's name the
-// item categories that may be sold to them. A list left unset means
+// send orders by; a customer's name the item categories that may be sold to
+// them and the cargos they may send orders by. A list left unset means
 // "everything" — the default, so every salesman and customer starts with full
-// access and picks up new customers and categories automatically.
+// access and picks up new customers, categories and cargos automatically.
+//
+// Category and cargo permissions follow whoever places the order: a salesman
+// ordering for a customer is held to the salesman's lists only, and a
+// customer ordering in the app to the customer's lists only. Admins are not
+// limited.
 //
 // Categories are kept by id, since they can be renamed, and resolved to the
 // names items carry when a query needs them.
@@ -31,10 +36,18 @@ const allowedCustomerIds = async (salesmanId) => {
   return salesman?.allowedCustomers ?? null;
 };
 
-// The cargo ids a salesman may send orders by, or null for every cargo
-const allowedCargoIds = async (salesmanId) => {
-  const salesman = await salesmanPermissions(salesmanId);
-  return salesman?.allowedCargos ?? null;
+// The cargo ids a signed-in user may send orders by, or null for every cargo
+// (admins and other staff)
+const allowedCargoIds = async (user) => {
+  if (user?.role === 'salesman') {
+    const salesman = await salesmanPermissions(user.id);
+    return salesman?.allowedCargos ?? null;
+  }
+  if (user?.role === 'customer' && mongoose.Types.ObjectId.isValid(user.id)) {
+    const customer = await Customer.findById(user.id).select('allowedCargos').lean();
+    return customer?.allowedCargos ?? null;
+  }
+  return null;
 };
 
 // The category names open to a salesman and / or a customer — both lists

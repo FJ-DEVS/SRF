@@ -1,6 +1,38 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+// One app login on a customer — a salesman working at the customer's own shop
+// (not one of our salesmen). A shop can have several, each with their own
+// username and password; `name` is shown as "Order by" on the orders they
+// place. The password fields are never sent out unless asked for (the admin
+// panel shows plainPassword, as it does for salesmen).
+const appUserSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  username: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    required: [true, 'Username is required']
+  },
+  password: {
+    type: String,
+    select: false
+  },
+  plainPassword: {
+    type: String,
+    select: false
+  }
+});
+
+appUserSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) return false;
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
 const customerSchema = new mongoose.Schema({
   phone: {
     type: String,
@@ -50,10 +82,21 @@ const customerSchema = new mongoose.Schema({
     type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
     default: undefined
   },
-  // App login, created by the admin. Optional — a customer without a username
-  // simply cannot sign in. Sparse so the many customers with no login do not
-  // collide on the unique index. The password fields are never sent out unless
-  // asked for (the admin panel shows plainPassword, as it does for salesmen).
+  // Cargos this customer may send their own orders by. Unset means every
+  // cargo — see utils/permissions.js.
+  allowedCargos: {
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Cargo' }],
+    default: undefined
+  },
+  // App logins, created by the admin. Optional — a customer with none simply
+  // cannot sign in.
+  appUsers: {
+    type: [appUserSchema],
+    default: []
+  },
+  // LEGACY — the single app login a customer had before appUsers. server.js
+  // moves any still found here into appUsers on start; kept in the schema so
+  // the password stays hidden until then.
   username: {
     type: String,
     trim: true,
@@ -72,9 +115,9 @@ const customerSchema = new mongoose.Schema({
     select: false,
     default: undefined
   },
-  // The salesman at the customer's own shop — typed in by the admin, not one
-  // of our salesmen. Named as "Order by" on the order images the customer
-  // shares from the app.
+  // LEGACY — the one shop salesman name from before appUsers. Copied to the
+  // migrated login's name; still read as "Order by" for orders placed before
+  // orders carried placedByName.
   shopSalesmanName: {
     type: String,
     trim: true,
@@ -88,10 +131,12 @@ const customerSchema = new mongoose.Schema({
   timestamps: true
 });
 
-customerSchema.methods.comparePassword = async function(candidatePassword) {
-  if (!this.password) return false;
-  return await bcrypt.compare(candidatePassword, this.password);
-};
+// Usernames are unique across every customer's logins. Partial so customers
+// with no logins are not indexed at all.
+customerSchema.index(
+  { 'appUsers.username': 1 },
+  { unique: true, partialFilterExpression: { 'appUsers.username': { $type: 'string' } } }
+);
 
 module.exports = mongoose.model('Customer', customerSchema);
 

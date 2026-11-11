@@ -26,6 +26,15 @@ const orderSchema = new mongoose.Schema({
     enum: ['admin', 'salesman', 'customer'],
     required: true
   },
+  // For an order a customer placed from the app: the name on the login that
+  // placed it — the salesman at their shop, shown as "Order by". A shop has
+  // several logins, so it is kept on the order rather than read off the
+  // customer. Empty for every other order.
+  placedByName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   type: {
     type: String,
     required: [true, 'Order type is required'],

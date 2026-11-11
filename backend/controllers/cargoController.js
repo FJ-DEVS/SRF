@@ -144,8 +144,8 @@ exports.updateCargo = async (req, res) => {
   }
 };
 
-// Get all cargo (salesman access). A salesman sees only the cargos they are
-// permitted to use; staff reading the filter options see every one.
+// Get all cargo (app access). A salesman or customer sees only the cargos they
+// are permitted to use; staff reading the filter options see every one.
 exports.getCargoListForSalesman = async (req, res) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
@@ -156,10 +156,9 @@ exports.getCargoListForSalesman = async (req, res) => {
       query.name = { $regex: search, $options: 'i' };
     }
 
-    if (req.user.role === 'salesman') {
-      const allowed = await allowedCargoIds(req.user.id);
-      if (allowed) query._id = { $in: allowed };
-    }
+    // Salesmen and customers see only their own cargos; staff see all
+    const allowed = await allowedCargoIds(req.user);
+    if (allowed) query._id = { $in: allowed };
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 

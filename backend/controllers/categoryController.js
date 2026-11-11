@@ -54,15 +54,19 @@ const optionalUser = (req) => {
   }
 };
 
-// Get all categories. A salesman's token narrows them to the categories they
-// may sell, and ?customer= to those that may be sold to that customer.
+// Get all categories. A salesman's or customer's token narrows them to the
+// categories that user may order — only their own permissions, since a
+// customer's list limits what the customer orders, not what a salesman orders
+// for them. Anyone else may pass ?customer= to narrow them to those that may
+// be sold to that customer.
 exports.getAllCategories = async (req, res) => {
   try {
     const user = optionalUser(req);
-    const allowed = await allowedCategoryNames({
-      salesmanId: user?.role === 'salesman' ? user.id : null,
-      customerId: req.query.customer
-    });
+    let scope;
+    if (user?.role === 'salesman') scope = { salesmanId: user.id };
+    else if (user?.role === 'customer') scope = { customerId: user.id };
+    else scope = { customerId: req.query.customer };
+    const allowed = await allowedCategoryNames(scope);
     const categories = await Category.find(allowed ? { name: { $in: allowed } } : {}).sort({ name: 1 });
     res.status(200).json({ success: true, data: categories });
   } catch (error) {

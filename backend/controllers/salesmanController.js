@@ -91,7 +91,7 @@ exports.createSalesman = async (req, res) => {
     // Customer app logins share the same login screen, so theirs count too.
     const [existingSalesman, existingCustomer] = await Promise.all([
       findDuplicate(Salesman, { username: exact(username) }),
-      findDuplicate(Customer, { username: exact(username) })
+      findDuplicate(Customer, { 'appUsers.username': exact(username) })
     ]);
     if (existingSalesman || existingCustomer) {
       return res.status(400).json({ 
@@ -218,7 +218,7 @@ exports.updateSalesman = async (req, res) => {
     if (username) {
       const [existingSalesman, existingCustomer] = await Promise.all([
         findDuplicate(Salesman, { username: exact(username) }, req.params.id),
-        findDuplicate(Customer, { username: exact(username) })
+        findDuplicate(Customer, { 'appUsers.username': exact(username) })
       ]);
       if (existingSalesman || existingCustomer) {
         return res.status(400).json({ success: false, message: 'Username already exists' });

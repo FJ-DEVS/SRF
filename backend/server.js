@@ -40,6 +40,7 @@ const placementRoutes = require('./routes/placement');
 const uploadRoutes = require('./routes/upload');
 const databaseRoutes = require('./routes/database');
 const reorderRoutes = require('./routes/reorder');
+const settingsRoutes = require('./routes/settings');
 const Category = require('./models/Category');
 
 // Use routes
@@ -62,6 +63,7 @@ app.use('/api/placements', placementRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/reorder', reorderRoutes);
+app.use('/api/settings', settingsRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];
@@ -150,10 +152,46 @@ async function migrateSchemaAllocations() {
   );
 }
 
+// A customer used to have one app login (username / password on the customer,
+// with shopSalesmanName as "Order by"); now a shop has a list, appUsers. Move
+// each old login into the list under the customer's own _id, so the tokens
+// already out there — which carry only the customer id — stay signed in and
+// can still be revoked one login at a time (see middleware/roleAuth.js).
+async function migrateCustomerAppLogins() {
+  const customers = mongoose.connection.collection('customers');
+  const legacy = await customers
+    .find({ username: { $exists: true, $nin: [null, ''] } })
+    .toArray();
+  if (legacy.length === 0) return;
+
+  let moved = 0;
+  for (const customer of legacy) {
+    const login = {
+      _id: customer._id,
+      name: customer.shopSalesmanName || '',
+      username: String(customer.username).trim().toLowerCase()
+    };
+    if (customer.password) login.password = customer.password;
+    if (customer.plainPassword) login.plainPassword = customer.plainPassword;
+
+    const result = await customers.updateOne(
+      { _id: customer._id, username: customer.username },
+      { $push: { appUsers: login }, $unset: { username: 1, password: 1, plainPassword: 1 } }
+    );
+    moved += result.modifiedCount;
+  }
+  console.warn(`Moved ${moved} customer app login(s) into the new multi-login list`);
+
+  // Make sure the unique index on appUsers.username is in place (create only —
+  // never drops anything)
+  await require('./models/Customer').createIndexes();
+}
+
 mongoose.connection.once('open', () => {
   seedCategories().catch(console.error);
   migratePlacementCapacity().catch(console.error);
   migrateSchemaAllocations().catch(console.error);
+  migrateCustomerAppLogins().catch(console.error);
 });
 
 const port = process.env.PORT;

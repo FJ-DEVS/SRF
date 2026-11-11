@@ -29,47 +29,73 @@ const grantAssignedSalesman = (customer) =>
     )
     : null;
 
-// The app login typed into the admin's customer form, checked and turned into
-// { set } / { unset } for the record — or { error }. `current` is the customer
-// as it stands (null while creating). Clearing the username takes the login
-// away. Usernames share the one login screen with salesmen, so a name taken by
-// either is refused.
-const loginUpdate = async ({ username, password }, current) => {
-  if (username === undefined && !password) return {};
+// The list of app logins typed into the admin's customer form — each
+// { _id?, name, username, password } — checked and turned into the appUsers
+// to save, or { error }. `current` is the customer as it stands, with its
+// password hashes (null while creating). A login keeps its password unless a
+// new one is typed; one left out of the list is taken away (`revoked` holds
+// their ids). Usernames share the one login screen with salesmen, so a name
+// taken by either is refused.
+const appUsersUpdate = async (list, current) => {
+  if (!Array.isArray(list)) return { error: 'App logins must be a list' };
 
-  const name = String(username ?? current?.username ?? '').trim().toLowerCase();
-  if (!name) {
-    return current?.username
-      ? { unset: { username: 1, password: 1, plainPassword: 1 }, revoked: true }
-      : {};
+  const existing = new Map((current?.appUsers || []).map((u) => [String(u._id), u]));
+  const appUsers = [];
+  const seen = new Set();
+
+  for (const entry of list) {
+    const name = String(entry?.name ?? '').trim();
+    const username = String(entry?.username ?? '').trim().toLowerCase();
+    const pass = String(entry?.password ?? '');
+    if (!name && !username && !pass) continue; // a blank row in the form
+
+    const label = name || username;
+    if (!username) return { error: `Enter a username for ${label}` };
+    if (/\s/.test(username)) return { error: `Username "${username}" cannot contain spaces` };
+    if (seen.has(username)) return { error: `Username "${username}" is used twice` };
+    seen.add(username);
+
+    const before = entry?._id && existing.get(String(entry._id));
+    if (!pass && !before) return { error: `Enter a password for ${label}` };
+    if (pass && pass.length < 6) return { error: `Password for ${label} must be at least 6 characters` };
+
+    const user = before
+      ? { _id: before._id, name, username, password: before.password, plainPassword: before.plainPassword }
+      : { name, username };
+    if (pass) {
+      user.password = await bcrypt.hash(pass, await bcrypt.genSalt(10));
+      user.plainPassword = pass;
+    }
+    appUsers.push(user);
   }
 
-  const pass = String(password ?? '');
-  if (!pass && !current?.username) {
-    return { error: 'A password is required to give this customer an app login' };
-  }
-  if (pass && pass.length < 6) {
-    return { error: 'Password must be at least 6 characters' };
+  if (seen.size) {
+    const names = [...seen];
+    const otherCustomers = current?._id ? { _id: { $ne: current._id } } : {};
+    const [customerClash, salesmanClash] = await Promise.all([
+      Customer.findOne({ 'appUsers.username': { $in: names }, ...otherCustomers }).select('appUsers.username').lean(),
+      Salesman.findOne({ username: { $in: names.map(exact) } }).select('username').lean()
+    ]);
+    const taken = salesmanClash?.username
+      || customerClash?.appUsers?.find((u) => seen.has(u.username))?.username;
+    if (taken) return { error: `Username "${String(taken).toLowerCase()}" already exists` };
   }
 
-  const [customerClash, salesmanClash] = await Promise.all([
-    findDuplicate(Customer, { username: exact(name) }, current?._id),
-    findDuplicate(Salesman, { username: exact(name) })
-  ]);
-  if (customerClash || salesmanClash) return { error: 'Username already exists' };
-
-  const set = { username: name };
-  if (pass) {
-    set.password = await bcrypt.hash(pass, await bcrypt.genSalt(10));
-    set.plainPassword = pass;
-  }
-  return { set };
+  const kept = new Set(appUsers.filter((u) => u._id).map((u) => String(u._id)));
+  const revoked = [...existing.keys()].filter((id) => !kept.has(id));
+  return { appUsers, revoked };
 };
 
-// Only the admin sees a customer's app password; CRM managers read the same
-// records without it
+// Every login of a customer that has gone — sign those phones out now, not on
+// their next request
+const emitRevoked = (ids) => {
+  for (const id of ids) getIO().emit('session_revoked', { role: 'customer', id: String(id) });
+};
+
+// Only the admin sees a customer's app passwords; CRM managers read the same
+// records without them
 const withPassword = (query, req) =>
-  req.user?.role === 'admin' ? query.select('+plainPassword') : query;
+  req.user?.role === 'admin' ? query.select('+appUsers.plainPassword') : query;
 
 // Customer login — the customer app, on the same screen as the salesman's
 exports.loginCustomer = async (req, res) => {
@@ -83,21 +109,28 @@ exports.loginCustomer = async (req, res) => {
       });
     }
 
-    const customer = await Customer.findOne({ username: String(username).trim().toLowerCase() })
-      .select('+password');
-    if (!customer || !(await customer.comparePassword(password))) {
+    const login = String(username).trim().toLowerCase();
+    const customer = await Customer.findOne({ 'appUsers.username': login })
+      .select('+appUsers.password');
+    const appUser = customer?.appUsers.find((u) => u.username === login);
+    if (!appUser || !(await appUser.comparePassword(password))) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
+    // `id` stays the customer — everything the customer may see or order is
+    // keyed on it. `userId` is the one login, checked on every request (see
+    // middleware/roleAuth.js) so taking it away signs out that phone alone.
     const token = jwt.sign(
       {
         id: customer._id,
-        username: customer.username,
+        userId: appUser._id,
+        username: appUser.username,
         role: 'customer',
-        name: customer.name
+        name: customer.name,
+        userName: appUser.name
       },
       process.env.JWT_SECRET,
       // Same window as staff — taking the login away or deleting the customer
@@ -111,8 +144,10 @@ exports.loginCustomer = async (req, res) => {
       token,
       user: {
         id: customer._id,
-        username: customer.username,
+        userId: appUser._id,
+        username: appUser.username,
         name: customer.name,
+        userName: appUser.name,
         phone: customer.phone,
         role: 'customer'
       }
@@ -134,7 +169,7 @@ exports.verifyCustomer = (req, res) => {
 // Create customer
 exports.createCustomer = async (req, res) => {
   try {
-    const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink, shopSalesmanName } = req.body;
+    const { phone, name, gstin, paymentRating, assignedSalesman, gstCertificate, locationLink } = req.body;
 
     // Phone number is the customer's identity — two records sharing one is a duplicate
     if (phone && !isPlaceholderPhone(phone)) {
@@ -144,7 +179,7 @@ exports.createCustomer = async (req, res) => {
       }
     }
 
-    const login = await loginUpdate(req.body, null);
+    const login = await appUsersUpdate(req.body.appUsers ?? [], null);
     if (login.error) {
       return res.status(400).json({ success: false, message: login.error });
     }
@@ -157,8 +192,7 @@ exports.createCustomer = async (req, res) => {
       assignedSalesman: assignedSalesman || null,
       gstCertificate: normaliseCertificate(gstCertificate),
       locationLink: (locationLink || '').trim(),
-      shopSalesmanName: (shopSalesmanName || '').trim(),
-      ...login.set
+      appUsers: login.appUsers
     });
 
     await customer.save();
@@ -167,7 +201,7 @@ exports.createCustomer = async (req, res) => {
     getIO().emit('customers_updated');
 
     const data = customer.toObject();
-    delete data.password;
+    for (const user of data.appUsers) delete user.password;
 
     res.status(201).json({
       success: true,
@@ -176,7 +210,7 @@ exports.createCustomer = async (req, res) => {
     });
 
   } catch (error) {
-    if (error.code === 11000 && error.keyPattern?.username) {
+    if (error.code === 11000 && error.keyPattern?.['appUsers.username']) {
       return res.status(400).json({ success: false, message: 'Username already exists' });
     }
     console.error('Create customer error:', error);
@@ -198,7 +232,9 @@ exports.getAllCustomers = async (req, res) => {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
         { phone: { $regex: search, $options: 'i' } },
-        { gstin: { $regex: search, $options: 'i' } }
+        { gstin: { $regex: search, $options: 'i' } },
+        { 'appUsers.username': { $regex: search, $options: 'i' } },
+        { 'appUsers.name': { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -273,8 +309,7 @@ exports.getCustomer = async (req, res) => {
 exports.updateCustomer = async (req, res) => {
   try {
     const {
-      phone, name, gstin, isBlocked, paymentRating, assignedSalesman, gstCertificate, locationLink,
-      shopSalesmanName
+      phone, name, gstin, isBlocked, paymentRating, assignedSalesman, gstCertificate, locationLink
     } = req.body;
 
     const updateData = {};
@@ -286,7 +321,6 @@ exports.updateCustomer = async (req, res) => {
     if (assignedSalesman !== undefined) updateData.assignedSalesman = assignedSalesman || null;
     if (gstCertificate !== undefined) updateData.gstCertificate = normaliseCertificate(gstCertificate);
     if (locationLink !== undefined) updateData.locationLink = (locationLink || '').trim();
-    if (shopSalesmanName !== undefined) updateData.shopSalesmanName = (shopSalesmanName || '').trim();
 
     if (phone !== undefined && phone && !isPlaceholderPhone(phone)) {
       const clash = await findDuplicate(Customer, { phone: exact(phone) }, req.params.id);
@@ -295,25 +329,27 @@ exports.updateCustomer = async (req, res) => {
       }
     }
 
-    let login = {};
-    if (req.body.username !== undefined || req.body.password) {
-      const current = await Customer.findById(req.params.id).select('username').lean();
+    // A request without appUsers (e.g. the block toggle) leaves the logins alone
+    let login = { revoked: [] };
+    if (req.body.appUsers !== undefined) {
+      const current = await Customer.findById(req.params.id)
+        .select('+appUsers.password +appUsers.plainPassword')
+        .lean();
       if (!current) {
         return res.status(404).json({ success: false, message: 'Customer not found' });
       }
-      login = await loginUpdate(req.body, current);
+      login = await appUsersUpdate(req.body.appUsers, current);
       if (login.error) {
         return res.status(400).json({ success: false, message: login.error });
       }
-      Object.assign(updateData, login.set);
-      if (login.unset) updateData.$unset = login.unset;
+      updateData.appUsers = login.appUsers;
     }
 
     const customer = await Customer.findByIdAndUpdate(
       req.params.id,
       updateData,
       { new: true, runValidators: true }
-    ).select('+plainPassword');
+    ).select('+appUsers.plainPassword');
 
     if (!customer) {
       return res.status(404).json({ 
@@ -325,8 +361,7 @@ exports.updateCustomer = async (req, res) => {
     if (assignedSalesman !== undefined) await grantAssignedSalesman(customer);
 
     getIO().emit('customers_updated');
-    // Login taken away — sign the customer's app out now, not on its next request
-    if (login.revoked) getIO().emit('session_revoked', { role: 'customer', id: String(customer._id) });
+    emitRevoked(login.revoked);
 
     res.status(200).json({
       success: true,
@@ -335,7 +370,7 @@ exports.updateCustomer = async (req, res) => {
     });
 
   } catch (error) {
-    if (error.code === 11000 && error.keyPattern?.username) {
+    if (error.code === 11000 && error.keyPattern?.['appUsers.username']) {
       return res.status(400).json({ success: false, message: 'Username already exists' });
     }
     console.error('Update customer error:', error);
@@ -346,24 +381,36 @@ exports.updateCustomer = async (req, res) => {
   }
 };
 
-// Set which item categories may be sold to a customer (Admin only). null opens
-// every category.
+// Set which item categories may be sold to a customer and which cargos they
+// may use (Admin only). null for either list opens it to every one.
 exports.updateCustomerPermissions = async (req, res) => {
   try {
     const categories = parseIdList(req.body.allowedCategories, 'Categories');
     if (categories.error) return res.status(400).json({ success: false, message: categories.error });
+    const cargos = parseIdList(req.body.allowedCargos, 'Cargos');
+    if (cargos.error) return res.status(400).json({ success: false, message: cargos.error });
 
-    const update = categories.list
-      ? { $set: { allowedCategories: categories.list } }
-      : { $unset: { allowedCategories: 1 } };
+    const lists = [['allowedCategories', categories.list]];
+    // Cargos came later: a request without them leaves them as they are
+    if (req.body.allowedCargos !== undefined) lists.push(['allowedCargos', cargos.list]);
+
+    // A list is saved as given; "all" is the field left unset
+    const update = {};
+    for (const [field, list] of lists) {
+      if (list) update.$set = { ...update.$set, [field]: list };
+      else update.$unset = { ...update.$unset, [field]: 1 };
+    }
+
     const customer = await Customer.findByIdAndUpdate(req.params.id, update, { new: true })
       .populate('assignedSalesman', 'name username phone')
-      .select('+plainPassword');
+      .select('+appUsers.plainPassword');
     if (!customer) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
 
     getIO().emit('customers_updated');
+    // A customer signed in to the app reloads their items and cargos
+    getIO().emit('permissions_updated', { role: 'customer', id: String(customer._id) });
 
     res.status(200).json({ success: true, message: 'Permissions updated', data: customer });
   } catch (error) {
@@ -503,8 +550,8 @@ exports.deleteCustomer = async (req, res) => {
     }
 
     getIO().emit('customers_updated');
-    // Kick the customer's app out too, if they had a login
-    if (customer.username) getIO().emit('session_revoked', { role: 'customer', id: String(customer._id) });
+    // Kick every phone signed in to one of the customer's logins
+    emitRevoked((customer.appUsers || []).map((u) => u._id));
 
     res.status(200).json({
       success: true,

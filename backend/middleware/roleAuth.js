@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const Salesman = require('../models/Salesman');
 const Roller = require('../models/Roller');
 const AccountsManager = require('../models/AccountsManager');
@@ -16,17 +17,22 @@ const ACCOUNT_MODELS = {
   customer: Customer
 };
 
-// A customer record outlives its app login — the admin can take the login away
-// and keep the customer — so for them it is the login that has to be there
+// A customer record outlives its app logins — the admin can take one away and
+// keep the customer — so for them it is the one login that has to be there.
+// Tokens from before customers had several logins carry no userId; their
+// login was moved into appUsers under the customer's own id (see server.js).
 const ACCOUNT_FILTERS = {
-  customer: { username: { $exists: true, $nin: [null, ''] } }
+  customer: (decoded) => ({ 'appUsers._id': decoded.userId || decoded.id })
 };
 
 const isAccountActive = async (decoded) => {
   const Model = ACCOUNT_MODELS[decoded.role];
   if (!Model) return true; // admin credentials live in .env — nothing to look up
   if (!decoded.id) return false;
-  return Boolean(await Model.exists({ _id: decoded.id, ...ACCOUNT_FILTERS[decoded.role] }));
+  const filter = ACCOUNT_FILTERS[decoded.role]?.(decoded) || {};
+  const ids = [decoded.id, ...Object.values(filter)];
+  if (!ids.every((id) => mongoose.isValidObjectId(id))) return false;
+  return Boolean(await Model.exists({ _id: decoded.id, ...filter }));
 };
 
 // roleAuth('admin', 'roller') -> middleware allowing either role

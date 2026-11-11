@@ -238,14 +238,15 @@ exports.updateItem = async (req, res) => {
 // Get all items (salesman / roller access)
 exports.getItemsForSalesman = async (req, res) => {
   try {
-    const { search, category, customer, sort, page = 1, limit = 10 } = req.query;
+    const { search, category, sort, page = 1, limit = 10 } = req.query;
 
     const conditions = [];
 
-    // A salesman sees only the categories they may sell — and, with
-    // ?customer=, only those that may also be sold to that customer
+    // A salesman sees only the categories they may sell. The customer's own
+    // list limits only what the customer orders in the app, not what a
+    // salesman orders for them, so ?customer= does not narrow this.
     if (req.user.role === 'salesman') {
-      const allowed = await allowedCategoryNames({ salesmanId: req.user.id, customerId: customer });
+      const allowed = await allowedCategoryNames({ salesmanId: req.user.id });
       if (allowed) conditions.push({ category: { $in: allowed } });
     }
 

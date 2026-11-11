@@ -21,6 +21,7 @@ import Consolidation from './pages/Consolidation';
 import Schemas from './pages/Schemas';
 import SchemaLeaderboard from './pages/SchemaLeaderboard';
 import Database from './pages/Database';
+import Settings from './pages/Settings';
 import Raks from './pages/Raks';
 import Rollers from './pages/Rollers';
 import AccountsUsers from './pages/AccountsUsers';
@@ -116,7 +117,8 @@ const adminPages = [
   { path: '/consolidation', element: <Consolidation /> },
   { path: '/schemas', element: <Schemas /> },
   { path: '/schema-leaderboard', element: <SchemaLeaderboard /> },
-  { path: '/database', element: <Database /> }
+  { path: '/database', element: <Database /> },
+  { path: '/settings', element: <Settings /> }
 ];
 
 const rollerPages = [

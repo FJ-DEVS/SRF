@@ -16,36 +16,67 @@ const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
 const { itemNameKeyStages, ITEM_NAME_SORTS } = require('../utils/itemNameSort');
 const { allowedCustomerIds, allowedCargoIds, allowedCategoryNames, firstForbiddenItem } = require('../utils/permissions');
+const { activeRestrictionFor } = require('../utils/orderRestriction');
 
 // Why a sell order's lines may not go out — an item whose category is not
-// open to the customer, or to the salesman placing it. Undefined when every
-// line is allowed.
-const categoryPermissionError = async (lines, { customerId, salesmanId }, session = null) => {
-  const checks = [];
-  if (customerId) checks.push({ names: await allowedCategoryNames({ customerId }), who: 'this customer' });
-  if (salesmanId) checks.push({ names: await allowedCategoryNames({ salesmanId }), who: 'you' });
-  if (checks.every((c) => c.names === null)) return undefined;
+// open to whoever is placing it. Only the placer's own permissions apply: a
+// salesman's when a salesman orders (the customer's list is not consulted),
+// a customer's when the customer orders in the app. Admins are not limited.
+// Undefined when every line is allowed.
+const categoryPermissionError = async (lines, user, session = null) => {
+  let names = null;
+  if (user.role === 'salesman') names = await allowedCategoryNames({ salesmanId: user.id });
+  else if (user.role === 'customer') names = await allowedCategoryNames({ customerId: user.id });
+  if (names === null) return undefined;
 
   const items = await Item.find({ _id: { $in: lines.map((l) => l.item) } })
     .select('name category')
     .session(session)
     .lean();
-  for (const check of checks) {
-    const bad = firstForbiddenItem(items, check.names);
-    if (bad) {
-      const category = bad.category ? `the ${bad.category} category` : 'no category';
-      return check.who === 'you'
-        ? `"${bad.name}" is in ${category}, which you are not permitted to sell`
-        : `"${bad.name}" is in ${category}, which is not permitted for this customer`;
-    }
+  const bad = firstForbiddenItem(items, names);
+  if (!bad) return undefined;
+  const category = bad.category ? `the ${bad.category} category` : 'no category';
+  return user.role === 'salesman'
+    ? `"${bad.name}" is in ${category}, which you are not permitted to sell`
+    : `"${bad.name}" is in ${category}, which you are not permitted to order`;
+};
+
+// Tell the apps that an order moved stock. The new quantities of its lines'
+// items ride along, so an app can patch its list in place instead of every
+// phone reloading the whole catalogue; older apps ignore them and reload as
+// before. Called after the commit, so the numbers are the ones now stored.
+// Fire and forget — a failure falls back to the bare event.
+const emitStockChanged = async (lines) => {
+  try {
+    const ids = [...new Set(lines.map((l) => String(l.item?._id ?? l.item)))];
+    const items = await Item.find({ _id: { $in: ids } }).select('quantity').lean();
+    getIO().emit('items_updated', {
+      changes: items.map((i) => ({ id: String(i._id), quantity: i.quantity }))
+    });
+  } catch (error) {
+    console.error('Emit stock change error:', error);
+    try { getIO().emit('items_updated'); } catch { /* socket not up */ }
   }
-  return undefined;
+};
+
+// The name on the customer login placing an order (the token's userId; tokens
+// from before several logins point at the login under the customer's own id).
+// Read fresh rather than from the token, so a renamed login shows its new name.
+const appUserName = async (user) => {
+  try {
+    const userId = String(user.userId || user.id);
+    const customer = await Customer.findById(user.id).select('appUsers._id appUsers.name').lean();
+    return customer?.appUsers?.find((u) => String(u._id) === userId)?.name || '';
+  } catch (error) {
+    console.error('Look up app user name error:', error);
+    return '';
+  }
 };
 
 // How to populate an order's createdBy: a salesman, or a customer who placed
-// the order from the app — with the name of the salesman at their own shop,
-// which the app shows as "Order by" on the shared image. Office orders carry
-// the string 'Admin' — null.
+// the order from the app. Orders from before placedByName read the shop's one
+// salesman name off the customer instead (shopSalesmanName), which the app
+// falls back to for "Order by". Office orders carry the string 'Admin' — null.
 const creatorPopulate = (order) => {
   if (order.createdByType === 'salesman') return { path: 'createdBy', model: 'Salesman', select: '-password' };
   if (order.createdByType === 'customer') return { path: 'createdBy', model: 'Customer', select: 'name phone shopSalesmanName' };
@@ -94,7 +125,7 @@ const recordFailedOrder = async ({ lines, customerId, cargoId, notes, user }) =>
       createdByType: ['salesman', 'customer'].includes(user.role) ? user.role : 'admin',
       createdByName: user.role === 'salesman'
         ? salesman?.name || user.name || ''
-        : user.role === 'customer' ? `${customer?.name || user.name || ''} (customer)` : 'Admin',
+        : user.role === 'customer' ? `${customer?.name || user.name || ''} (${user.userName || 'customer'})` : 'Admin',
       items: lines,
       notes: notes || null
     });
@@ -266,6 +297,21 @@ exports.createOrder = async (req, res) => {
     // A customer orders for themselves — whatever the body says
     const customerName = isCustomer ? req.user.id : req.body.customerName;
 
+    // Admin → Settings can close ordering for a while (e.g. 6 PM → 8 AM).
+    // Salesmen and customers are turned away with the times; the admin is not.
+    const restriction = await activeRestrictionFor(req.user);
+    if (restriction) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        code: 'ORDERING_PAUSED',
+        message: restriction.message,
+        from: restriction.from,
+        to: restriction.to
+      });
+    }
+
     // Validate that salesman can only create sell orders
     if (req.user.role === 'salesman' && type !== 'sell order') {
       await session.abortTransaction();
@@ -427,27 +473,27 @@ exports.createOrder = async (req, res) => {
     }
 
     // Permissions: a salesman orders only for the customers they have been
-    // given, and a sell order holds only categories open to its customer and
-    // to the salesman placing it
+    // given, and a sell order holds only categories and a cargo open to
+    // whoever places it — the salesman's own, or the customer's when they
+    // order in the app
     if (type === 'sell order') {
-      const salesmanId = req.user.role === 'salesman' ? req.user.id : null;
-      if (salesmanId) {
-        const allowedCustomers = await allowedCustomerIds(salesmanId);
+      if (req.user.role === 'salesman') {
+        const allowedCustomers = await allowedCustomerIds(req.user.id);
         if (allowedCustomers && !allowedCustomers.some((id) => String(id) === String(customerName))) {
           await session.abortTransaction();
           session.endSession();
           return res.status(403).json({ success: false, message: 'You are not permitted to order for this customer' });
         }
-        if (cargo) {
-          const allowedCargos = await allowedCargoIds(salesmanId);
-          if (allowedCargos && !allowedCargos.some((id) => String(id) === String(cargo))) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(403).json({ success: false, message: 'You are not permitted to send orders by this cargo' });
-          }
+      }
+      if (cargo) {
+        const allowedCargos = await allowedCargoIds(req.user);
+        if (allowedCargos && !allowedCargos.some((id) => String(id) === String(cargo))) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(403).json({ success: false, message: 'You are not permitted to send orders by this cargo' });
         }
       }
-      const permissionError = await categoryPermissionError(items, { customerId: customerName, salesmanId }, session);
+      const permissionError = await categoryPermissionError(items, req.user, session);
       if (permissionError) {
         await session.abortTransaction();
         session.endSession();
@@ -530,6 +576,9 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    // The shop salesman signed in on this phone, for "Order by"
+    const placedByName = isCustomer ? await appUserName(req.user) : '';
+
     // Create the order (stock already updated atomically above)
     const order = new Order({
       type,
@@ -540,6 +589,7 @@ exports.createOrder = async (req, res) => {
       notes: notes || null,
       createdBy: req.user.role === 'admin' ? 'Admin' : req.user.id,
       createdByType: req.user.role,
+      placedByName,
       status: 'pending',
       returnOf,
       restocked
@@ -566,7 +616,7 @@ exports.createOrder = async (req, res) => {
     // Send push notification to admin
     const salesmanName = req.user.role === 'salesman'
       ? req.user.name
-      : isCustomer ? `${order.customerName?.name || req.user.name} (customer)` : 'Admin';
+      : isCustomer ? `${order.customerName?.name || req.user.name} (${placedByName || 'customer'})` : 'Admin';
     await sendPushNotification(
       type === 'return order' ? `Return recorded by ${salesmanName}` : `New order placed by ${salesmanName}`,
       {
@@ -577,6 +627,9 @@ exports.createOrder = async (req, res) => {
     );
 
     getIO().emit('orders_updated');
+    // A sell order took its lines out of stock — every other phone showing
+    // those items needs the new counts
+    if (type === 'sell order') emitStockChanged(items);
 
     res.status(201).json({
       success: true,
@@ -1461,6 +1514,7 @@ exports.updateOrderStatus = async (req, res) => {
             { session }
           );
         }
+        itemsChanged = true;
       }
 
       order.status = fresh.status;
@@ -1507,7 +1561,7 @@ exports.updateOrderStatus = async (req, res) => {
     await order.populate(populateOptions);
 
     getIO().emit('orders_updated');
-    if (itemsChanged) getIO().emit('items_updated');
+    if (itemsChanged) emitStockChanged(order.items);
     if (raksChanged) {
       // The roller's rak screens are now showing stale occupancy
       getIO().emit('placements_updated');
@@ -1627,16 +1681,6 @@ exports.updateOrder = async (req, res) => {
             message: 'Vendor not found'
           });
         }
-      }
-    }
-
-    // A sell order may only hold categories open to its customer
-    if (existingOrder.type === 'sell order' && (items !== undefined || customerName !== undefined)) {
-      const permissionError = await categoryPermissionError(items ?? existingOrder.items, {
-        customerId: customerName ?? existingOrder.customerName
-      });
-      if (permissionError) {
-        return res.status(400).json({ success: false, message: permissionError });
       }
     }
 
@@ -1767,6 +1811,7 @@ exports.revertOrderStatus = async (req, res) => {
     }
 
     // If reverting a completed purchase order, deduct the stock that was added
+    let itemsChanged = false;
     if (order.type === 'purchase order' && order.status === 'completed') {
       for (const orderItem of order.items) {
         await Item.findByIdAndUpdate(
@@ -1775,13 +1820,13 @@ exports.revertOrderStatus = async (req, res) => {
           { session }
         );
       }
+      itemsChanged = true;
     }
 
     // Reverting a completed return takes back exactly what completing it put
     // in: restocked pieces out of stock, damaged pieces off the damaged list.
     // The split stays on the lines, ready to be reconfirmed. Damaged pieces
     // already restored since cannot be taken back, so the revert is refused.
-    let itemsChanged = false;
     if (order.type === 'return order' && order.status === 'completed') {
       for (const line of order.items) {
         const { restock, damaged } = returnSplitOf(order, line);
@@ -1834,7 +1879,7 @@ exports.revertOrderStatus = async (req, res) => {
     session.endSession();
 
     getIO().emit('orders_updated');
-    if (itemsChanged) getIO().emit('items_updated');
+    if (itemsChanged) emitStockChanged(order.items);
     if (raksChanged) {
       getIO().emit('placements_updated');
       getIO().emit('raks_updated');
@@ -1955,6 +2000,8 @@ exports.approveCancellation = async (req, res) => {
     session.endSession();
 
     getIO().emit('orders_updated');
+    // A cancelled sell order handed its lines back to stock
+    if (order.type === 'sell order') emitStockChanged(order.items);
     if (raksChanged) {
       getIO().emit('placements_updated');
       getIO().emit('raks_updated');

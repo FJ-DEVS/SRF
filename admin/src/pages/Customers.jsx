@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import api from '../utils/api';
+import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import DetailModal from '../components/DetailModal';
@@ -14,13 +14,35 @@ import {
   Upload, FileText, MapPin, KeyRound, Smartphone
 } from 'lucide-react';
 
-// Marks a customer who can sign into the mobile app themselves
-const AppLoginBadge = () => (
-  <span className="srf-badge shrink-0 bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200" title="Has an app login">
+// Marks a customer whose shop can sign into the mobile app, with how many logins
+const AppLoginBadge = ({ count }) => (
+  <span
+    className="srf-badge shrink-0 bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200"
+    title={`${count} app login${count === 1 ? '' : 's'}`}
+  >
     <Smartphone className="h-3 w-3" />
-    App
+    App{count > 1 && ` · ${count}`}
   </span>
 );
+
+// One app login row in the form. `key` only tells rows apart while editing;
+// `_id` marks a login that already exists (its password may be left blank).
+let loginKey = 0;
+const blankLogin = () => ({ key: `new-${++loginKey}`, name: '', username: '', password: '' });
+const loginsOf = (customer) =>
+  (customer?.appUsers || []).map((u) => ({ key: u._id, _id: u._id, name: u.name || '', username: u.username, password: '' }));
+
+const emptyForm = () => ({
+  name: '',
+  phone: '',
+  gstin: '',
+  isBlocked: false,
+  paymentRating: 'good',
+  assignedSalesman: '',
+  gstCertificate: { url: '', key: '', name: '' },
+  locationLink: '',
+  appUsers: []
+});
 
 const PAYMENT_RATING = {
   good:    { label: 'Good Payer',    bg: 'bg-emerald-50', text: 'text-emerald-700', ring: 'ring-emerald-200', dot: 'bg-emerald-500' },
@@ -59,26 +81,15 @@ const Customers = () => {
   const [blockTarget, setBlockTarget] = useState(null);
   const [detailCustomer, setDetailCustomer] = useState(null);
   const [salesmen, setSalesmen] = useState([]);
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    gstin: '',
-    isBlocked: false,
-    paymentRating: 'good',
-    assignedSalesman: '',
-    gstCertificate: { url: '', key: '', name: '' },
-    locationLink: '',
-    username: '',
-    password: '',
-    shopSalesmanName: ''
-  });
-  const [showPassword, setShowPassword] = useState(false);
+  const [formData, setFormData] = useState(emptyForm);
+  // Keys of the login rows whose password is shown in clear
+  const [visiblePasswords, setVisiblePasswords] = useState(() => new Set());
   const certInputRef = useRef(null);
   const [certUploading, setCertUploading] = useState(false);
-  // Permission manager: the customer being edited and the categories to
+  // Permission manager: the customer being edited and the categories and cargos to
   // choose from (loaded fresh each time it opens)
   const [permTarget, setPermTarget] = useState(null);
-  const [permCategories, setPermCategories] = useState(null);
+  const [permOptions, setPermOptions] = useState(null);
 
   useEffect(() => {
     fetchCustomers();
@@ -129,18 +140,54 @@ const Customers = () => {
     setShowAlertModal(true);
   };
 
+  const updateLogin = (key, changes) =>
+    setFormData((prev) => ({
+      ...prev,
+      appUsers: prev.appUsers.map((u) => (u.key === key ? { ...u, ...changes } : u))
+    }));
+
+  const addLogin = () =>
+    setFormData((prev) => ({ ...prev, appUsers: [...prev.appUsers, blankLogin()] }));
+
+  const removeLogin = (key) =>
+    setFormData((prev) => ({ ...prev, appUsers: prev.appUsers.filter((u) => u.key !== key) }));
+
+  const togglePasswordVisible = (key) =>
+    setVisiblePasswords((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // The row keys stay in the browser; only the login fields go to the server
+    const payload = {
+      ...formData,
+      appUsers: formData.appUsers.map(({ _id, name, username, password }) => ({ _id, name, username, password }))
+    };
+
     try {
       if (selectedCustomer) {
-        const response = await api.put(`/customers/${selectedCustomer._id}`, formData);
+        const removed = loginsOf(selectedCustomer).filter(
+          (u) => !formData.appUsers.some((row) => row._id === u._id)
+        );
+        const response = await api.put(`/customers/${selectedCustomer._id}`, payload);
         if (response.data.success) {
           fetchCustomers();
           handleCloseModal();
+          if (removed.length) {
+            showAlert(
+              'Logins Removed',
+              `${removed.map((u) => u.name || u.username).join(', ')} can no longer sign in to the app.`,
+              'success'
+            );
+          }
         }
       } else {
-        const response = await api.post('/customers', formData);
+        const response = await api.post('/customers', payload);
         if (response.data.success) {
           const name = formData.name;
           fetchCustomers();
@@ -181,9 +228,7 @@ const Customers = () => {
         name: customer.gstCertificate?.name || ''
       },
       locationLink: customer.locationLink || '',
-      username: customer.username || '',
-      password: '',
-      shopSalesmanName: customer.shopSalesmanName || ''
+      appUsers: loginsOf(customer)
     });
     setShowModal(true);
   };
@@ -191,12 +236,8 @@ const Customers = () => {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedCustomer(null);
-    setShowPassword(false);
-    setFormData({
-      name: '', phone: '', gstin: '', isBlocked: false, paymentRating: 'good', assignedSalesman: '',
-      gstCertificate: { url: '', key: '', name: '' }, locationLink: '', username: '', password: '',
-      shopSalesmanName: ''
-    });
+    setVisiblePasswords(new Set());
+    setFormData(emptyForm());
   };
 
   // The certificate lands on DigitalOcean Spaces first; the customer record
@@ -256,13 +297,19 @@ const Customers = () => {
 
   const openPermissions = async (customer) => {
     setPermTarget(customer);
-    setPermCategories(null);
+    setPermOptions(null);
     try {
-      const response = await api.get('/categories');
-      setPermCategories((response.data.data || []).map((c) => ({ value: c._id, label: c.name })));
+      const [categoriesRes, cargos] = await Promise.all([
+        api.get('/categories'),
+        fetchAll('/cargo', { sort: 'name_asc' })
+      ]);
+      setPermOptions({
+        categories: (categoriesRes.data.data || []).map((c) => ({ value: c._id, label: c.name })),
+        cargos: cargos.map((c) => ({ value: c._id, label: c.name }))
+      });
     } catch (error) {
       setPermTarget(null);
-      showAlert('Error', error.response?.data?.message || 'Could not load the categories', 'error');
+      showAlert('Error', error.response?.data?.message || 'Could not load the categories and cargos', 'error');
     }
   };
 
@@ -273,7 +320,7 @@ const Customers = () => {
         const name = permTarget.name;
         setPermTarget(null);
         fetchCustomers();
-        showAlert('Permissions Saved', `${name}'s item categories have been updated.`, 'success');
+        showAlert('Permissions Saved', `${name}'s item categories and cargos have been updated.`, 'success');
       }
     } catch (error) {
       showAlert('Error', error.response?.data?.message || 'Could not save the permissions', 'error');
@@ -293,11 +340,17 @@ const Customers = () => {
     },
     { label: 'Location', value: customer?.locationLink || '', type: 'link', linkLabel: 'Open in maps', key: 'locationLink' },
     { label: 'Assigned Salesman', value: customer?.assignedSalesman?.name || '—', type: 'text', key: 'assignedSalesman' },
-    { label: 'App Username', value: customer?.username || 'No app login', type: 'text', key: 'username' },
-    ...(customer?.username
-      ? [{ label: 'App Password', value: customer?.plainPassword || '', type: 'password', key: 'password' }]
-      : []),
-    { label: 'Shop Salesman', value: customer?.shopSalesmanName || '—', type: 'text', key: 'shopSalesmanName' },
+    ...(customer?.appUsers?.length
+      ? customer.appUsers.flatMap((u, i) => [
+        {
+          label: `App Login ${i + 1}`,
+          value: u.name ? `${u.name} — ${u.username}` : u.username,
+          type: 'text',
+          key: `login-${u._id}`
+        },
+        { label: `Password ${i + 1}`, value: u.plainPassword || '', type: 'password', key: `password-${u._id}` }
+      ])
+      : [{ label: 'App Login', value: 'No app login', type: 'text', key: 'login' }]),
     { label: 'Status', value: customer?.isBlocked ? 'Blocked' : 'Active', type: 'badge', key: 'status' },
     { label: 'Payment Rating', value: PAYMENT_RATING[customer?.paymentRating]?.label || 'Good Payer', type: 'text', key: 'paymentRating' },
     { label: 'Created At', value: customer?.createdAt, type: 'datetime', key: 'createdAt' },
@@ -418,7 +471,7 @@ const Customers = () => {
                       <td className="max-w-[260px]">
                         <div className="flex items-center gap-1.5">
                           <p className="truncate font-semibold text-slate-900">{customer.name}</p>
-                          {customer.username && <AppLoginBadge />}
+                          {customer.appUsers?.length > 0 && <AppLoginBadge count={customer.appUsers.length} />}
                         </div>
                         {customer.gstin &&<p className="truncate text-[11px] text-slate-400">GSTIN: {customer.gstin}</p>}
                         <div className="mt-0.5 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -480,7 +533,7 @@ const Customers = () => {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
-                      {customer.username && <AppLoginBadge />}
+                      {customer.appUsers?.length > 0 && <AppLoginBadge count={customer.appUsers.length} />}
                       {customer.isBlocked && (
                         <span className="srf-badge shrink-0 bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">Blocked</span>
                       )}
@@ -637,69 +690,96 @@ const Customers = () => {
                 </select>
               </div>
 
-              {/* App login — lets the customer sign into the mobile app and
-                  place their own orders */}
+              {/* App logins — one per salesman at the customer's shop, each
+                  signing into the mobile app to place the shop's orders */}
               <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                 <div>
                   <p className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
                     <Smartphone className="h-4 w-4 text-sky-600" />
-                    App Login <span className="font-normal text-slate-400">(optional)</span>
+                    App Logins <span className="font-normal text-slate-400">(optional)</span>
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-400">
-                    {selectedCustomer?.username
-                      ? 'Clear the username to remove this customer’s app login.'
-                      : 'Give the customer a username and password to order from the mobile app.'}
+                    Give each salesman at the customer’s shop their own username and password to order
+                    from the mobile app. Their name is shown as “Order by” on the orders they place.
                   </p>
                 </div>
-                <div>
-                  <label className="mb-1.5 block">Username</label>
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block">
-                    Password {selectedCustomer?.username && <span className="font-normal text-slate-400">(leave blank to keep current)</span>}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      required={Boolean(formData.username.trim()) && !selectedCustomer?.username}
-                      minLength={6}
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="w-full !pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
-                      tabIndex={-1}
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1.5 block">
-                    Shop Salesman Name <span className="font-normal text-slate-400">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.shopSalesmanName}
-                    onChange={(e) => setFormData({ ...formData, shopSalesmanName: e.target.value })}
-                    className="w-full"
-                    placeholder="The salesman at the customer's shop"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Shown as “Order by” on the order images this customer shares from the app.
-                  </p>
-                </div>
+
+                {formData.appUsers.map((login, index) => {
+                  const shown = visiblePasswords.has(login.key);
+                  return (
+                    <div key={login.key} className="space-y-2.5 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-400">
+                          Login {index + 1}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => removeLogin(login.key)}
+                          className="srf-row-action text-rose-500 hover:bg-rose-50"
+                          title={login._id ? 'Remove this login (signs them out of the app)' : 'Remove'}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block">Salesman Name</label>
+                        <input
+                          type="text"
+                          value={login.name}
+                          onChange={(e) => updateLogin(login.key, { name: e.target.value })}
+                          className="w-full"
+                          placeholder="The salesman at the customer's shop"
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block">Username</label>
+                          <input
+                            type="text"
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            value={login.username}
+                            onChange={(e) => updateLogin(login.key, { username: e.target.value })}
+                            className="w-full"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block">
+                            Password {login._id && <span className="font-normal text-slate-400">(blank keeps it)</span>}
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={shown ? 'text' : 'password'}
+                              autoComplete="new-password"
+                              minLength={6}
+                              value={login.password}
+                              onChange={(e) => updateLogin(login.key, { password: e.target.value })}
+                              className="w-full !pr-10"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => togglePasswordVisible(login.key)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
+                              tabIndex={-1}
+                              title={shown ? 'Hide password' : 'Show password'}
+                            >
+                              {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  onClick={addLogin}
+                  className="srf-btn srf-btn-secondary w-full !justify-center"
+                >
+                  <Plus className="h-4 w-4 text-slate-400" />
+                  {formData.appUsers.length ? 'Add another login' : 'Add app login'}
+                </button>
               </div>
 
               <label className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
@@ -737,16 +817,24 @@ const Customers = () => {
         <PermissionsModal
           key={permTarget._id}
           title={`${permTarget.name} — Permissions`}
-          subtitle="Which item categories can be sold to this customer"
-          loading={!permCategories}
+          subtitle="Which item categories this customer can order, and which cargos they can use when ordering in the app"
+          loading={!permOptions}
           sections={[
             {
               key: 'allowedCategories',
               label: 'Item Categories',
               allLabel: 'All categories',
-              emptyWarning: 'No categories ticked — no item can be ordered for this customer.',
-              options: permCategories || [],
+              emptyWarning: 'No categories ticked — this customer cannot order any item in the app.',
+              options: permOptions?.categories || [],
               value: permTarget.allowedCategories
+            },
+            {
+              key: 'allowedCargos',
+              label: 'Cargos',
+              allLabel: 'All cargos',
+              emptyWarning: 'No cargos ticked — this customer can only place orders without a cargo.',
+              options: permOptions?.cargos || [],
+              value: permTarget.allowedCargos
             }
           ]}
           onClose={() => setPermTarget(null)}
