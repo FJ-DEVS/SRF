@@ -22,6 +22,8 @@ import Schemas from './pages/Schemas';
 import SchemaLeaderboard from './pages/SchemaLeaderboard';
 import Database from './pages/Database';
 import Settings from './pages/Settings';
+import Outstandings from './pages/Outstandings';
+import TallySync from './pages/TallySync';
 import Raks from './pages/Raks';
 import Rollers from './pages/Rollers';
 import AccountsUsers from './pages/AccountsUsers';
@@ -117,6 +119,8 @@ const adminPages = [
   { path: '/consolidation', element: <Consolidation /> },
   { path: '/schemas', element: <Schemas /> },
   { path: '/schema-leaderboard', element: <SchemaLeaderboard /> },
+  { path: '/outstandings', element: <Outstandings /> },
+  { path: '/tally-sync', element: <TallySync /> },
   { path: '/database', element: <Database /> },
   { path: '/settings', element: <Settings /> }
 ];
