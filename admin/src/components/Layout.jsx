@@ -23,6 +23,8 @@ import {
   Headset,
   DatabaseBackup,
   Settings as SettingsIcon,
+  WalletCards,
+  RefreshCw,
   LogOut,
   MoreHorizontal,
   X
@@ -33,6 +35,8 @@ const menuItems = [
   { path: '/consolidation', icon: BarChart3, label: 'Consolidation' },
   { path: '/orders', icon: ShoppingCart, label: 'Orders' },
   { path: '/failed-orders', icon: PackageX, label: 'Failed Orders' },
+  { path: '/outstandings', icon: WalletCards, label: 'Outstandings' },
+  { path: '/tally-sync', icon: RefreshCw, label: 'Tally Sync' },
   { path: '/items', icon: Package, label: 'Items' },
   { path: '/reorder', icon: ClipboardList, label: 'Reorder' },
   { path: '/reorder-levels', icon: SlidersHorizontal, label: 'Reorder Levels' },

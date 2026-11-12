@@ -18,6 +18,9 @@ mongoose.connect(process.env.MONGODB_URI)
 
 
 
+// Mounted ahead of the JSON parser below: the Tally API parses its own, larger bodies
+app.use('/api/v1/tally', require('./routes/tallyApi'));
+
 app.use(express.json());
 
 // Import routes
@@ -41,6 +44,7 @@ const uploadRoutes = require('./routes/upload');
 const databaseRoutes = require('./routes/database');
 const reorderRoutes = require('./routes/reorder');
 const settingsRoutes = require('./routes/settings');
+const tallyRoutes = require('./routes/tally');
 const Category = require('./models/Category');
 
 // Use routes
@@ -64,6 +68,7 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/reorder', reorderRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/tally', tallyRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];
