@@ -241,7 +241,8 @@ const Outstandings = () => {
             ...Object.fromEntries(row.buckets.map((b) => [b.label, b.amount])),
             Overdue: row.overdueAmount,
             'On account': row.onAccountAmount,
-            'Total pending': row.pendingAmount
+            'Total pending': row.pendingAmount,
+            'Closing balance': row.closingAmount ?? ''
           }))
         : all.map((row) => ({
             Date: row.voucherDate ? row.voucherDate.slice(0, 10) : '',
@@ -564,6 +565,7 @@ const Outstandings = () => {
                         {slabs.map((s) => <th key={s.index} className="text-right">{s.label}</th>)}
                         <th className="text-right">Overdue</th>
                         <th className="text-right">Total pending</th>
+                        <th className="text-right" title="The customer's closing balance in Tally">Closing balance</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -576,6 +578,9 @@ const Outstandings = () => {
                             {row.overdueAmount > 0 ? <span className="font-semibold tabular-nums text-rose-600">{money(row.overdueAmount)}</span> : <span className="text-slate-300">—</span>}
                           </td>
                           <td className="whitespace-nowrap text-right">{amountCell(row.pendingAmount, true)}</td>
+                          <td className="whitespace-nowrap text-right">
+                            {row.closingAmount === null || row.closingAmount === undefined ? <span className="text-slate-300">—</span> : amountCell(row.closingAmount)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -586,6 +591,7 @@ const Outstandings = () => {
                         {slabs.map((s) => <td key={s.index} className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{money(s.amount)}</td>)}
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-rose-600">{money(totals.overdueAmount)}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{money(totals.pendingAmount)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{totals.closingAmount === null || totals.closingAmount === undefined ? '—' : money(totals.closingAmount)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -600,6 +606,7 @@ const Outstandings = () => {
                         <p className="mt-0.5 text-xs text-slate-400">
                           {row.bills} bill(s)
                           {row.overdueAmount > 0 && <span className="font-semibold text-rose-600"> · {money(row.overdueAmount)} overdue</span>}
+                          {row.closingAmount !== null && row.closingAmount !== undefined && <span> · closing {money(row.closingAmount)}</span>}
                         </p>
                       </div>
                       <span className="shrink-0 text-sm">{amountCell(row.pendingAmount, true)}</span>

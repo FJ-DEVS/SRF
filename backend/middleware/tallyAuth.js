@@ -4,15 +4,23 @@ const TallyConfig = require('../models/TallyConfig');
 const hashKey = (key) => crypto.createHash('sha256').update(String(key)).digest('hex');
 
 // The Tally side signs every request with the API key generated in
-// Admin → Tally Sync, sent as "Authorization: Bearer <key>"
+// Admin → Tally Sync: as "api_key" in the JSON body (the sync's own format),
+// or as "Authorization: Bearer <key>" (for the GET endpoints, which have no body)
+const keyOf = (req) => {
+  const fromBody = req.body && typeof req.body === 'object' ? req.body.api_key : null;
+  if (typeof fromBody === 'string' && fromBody.trim()) return fromBody.trim();
+  const [scheme, key] = String(req.headers.authorization || '').split(' ');
+  return scheme === 'Bearer' && key ? key : null;
+};
+
 const tallyAuth = async (req, res, next) => {
   try {
-    const [scheme, key] = String(req.headers.authorization || '').split(' ');
-    if (scheme !== 'Bearer' || !key) {
+    const key = keyOf(req);
+    if (!key) {
       return res.status(401).json({
         success: false,
         error_code: 'UNAUTHORIZED',
-        message: 'Send the API key as "Authorization: Bearer <key>"'
+        message: 'Send the API key as "api_key" in the request body, or as "Authorization: Bearer <key>"'
       });
     }
 

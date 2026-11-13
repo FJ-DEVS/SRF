@@ -22,7 +22,7 @@ router.use((err, req, res, next) => {
     return res.status(413).json({
       success: false,
       error_code: 'PAYLOAD_TOO_LARGE',
-      message: 'Request body is larger than 10 MB — send the outstandings in batches'
+      message: 'Request body is larger than 10 MB'
     });
   }
   if (err.type === 'entity.parse.failed') {

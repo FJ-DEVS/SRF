@@ -288,6 +288,7 @@ exports.getBills = async (req, res) => {
         originalAmount: rupees(row.originalPaise),
         paidAmount: rupees(row.paidPaise),
         pendingAmount: rupees(row.pendingPaise),
+        closingAmount: rupees(row.closingPaise),
         billStatus: row.billStatus,
         narration: row.narration,
         ageDays: row.ageDays,
@@ -343,6 +344,7 @@ exports.getParties = async (req, res) => {
         overduePaise: { $sum: { $cond: [{ $gt: ['$overdueDays', 0] }, '$pendingPaise', 0] } },
         overdueBills: { $sum: { $cond: [{ $gt: ['$overdueDays', 0] }, 1, 0] } },
         onAccountPaise: { $sum: { $cond: [{ $eq: ['$entryType', 'ON_ACCOUNT'] }, '$pendingPaise', 0] } },
+        closingPaise: { $first: '$closingPaise' },
         oldestBill: { $min: '$voucherDate' },
         maxDays: { $max: '$basisDays' },
         ...sums
@@ -365,6 +367,8 @@ exports.getParties = async (req, res) => {
             overduePaise: { $sum: '$overduePaise' },
             overdueBills: { $sum: '$overdueBills' },
             overdueParties: { $sum: { $cond: [{ $gt: ['$overduePaise', 0] }, 1, 0] } },
+            closingPaise: { $sum: '$closingPaise' },
+            closingParties: { $sum: { $cond: [{ $ne: ['$closingPaise', null] }, 1, 0] } },
             ...Object.fromEntries(sumKeys.map((key) => [key, { $sum: `$${key}` }]))
           }
         }]
@@ -381,6 +385,7 @@ exports.getParties = async (req, res) => {
         ledger: describeLedger(ledgers.get(String(row._id))) || { _id: row._id, name: row.ledgerName },
         bills: row.bills,
         pendingAmount: rupees(row.pendingPaise),
+        closingAmount: rupees(row.closingPaise),
         overdueAmount: rupees(row.overduePaise),
         overdueBills: row.overdueBills,
         onAccountAmount: rupees(row.onAccountPaise),
@@ -395,7 +400,8 @@ exports.getParties = async (req, res) => {
         pendingAmount: rupees(totals?.pendingPaise || 0),
         overdueAmount: rupees(totals?.overduePaise || 0),
         overdueBills: totals?.overdueBills || 0,
-        overdueParties: totals?.overdueParties || 0
+        overdueParties: totals?.overdueParties || 0,
+        closingAmount: totals?.closingParties ? rupees(totals.closingPaise) : null
       },
       basis,
       buckets: readBuckets(totals, buckets, basis)

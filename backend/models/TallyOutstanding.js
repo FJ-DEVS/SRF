@@ -46,6 +46,9 @@ const tallyOutstandingSchema = new mongoose.Schema({
   originalPaise: { type: Number, default: null },
   paidPaise: { type: Number, default: null },
   pendingPaise: { type: Number, required: true },
+  // The customer's closing balance in Tally, as sent with this bill
+  // (closing_amount) — the same for every bill of one customer
+  closingPaise: { type: Number, default: null },
   billStatus: { type: String, trim: true, default: '' },
   narration: { type: String, trim: true, default: '' }
 }, {

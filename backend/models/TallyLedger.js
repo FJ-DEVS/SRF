@@ -39,6 +39,11 @@ const tallyLedgerSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
+  // Closing balance in Tally (closing_amount) as of the last sync, in paise
+  closingPaise: {
+    type: Number,
+    default: null
+  },
   customer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',

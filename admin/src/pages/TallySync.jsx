@@ -332,7 +332,7 @@ const TallySync = () => {
               </table>
             </div>
             <p className="text-[11px] text-slate-400">
-              Every request carries <code>Authorization: Bearer &lt;API key&gt;</code>. The full contract for the Tally team is in <code>backend/TALLY_API.md</code>.
+              The sync request carries the key as <code>api_key</code> in its JSON body (GET requests send <code>Authorization: Bearer &lt;API key&gt;</code>). The full contract for the Tally team is in <code>backend/TALLY_API.md</code>.
             </p>
           </div>
         </div>
