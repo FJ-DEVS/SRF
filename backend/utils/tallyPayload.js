@@ -20,15 +20,27 @@ const text = (value, max = 200) =>
 // and "a k plywoods" do not.
 const nameKey = (name) => text(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-// A day as UTC midnight, from "YYYY-MM-DD" or Tally's own "YYYYMMDD".
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// A day as UTC midnight, from "YYYY-MM-DD", Tally's own "YYYYMMDD", or the
+// "17-Nov-26" / "17-Nov-2026" Tally prints in its reports.
 // undefined when blank, null when it is not a real date.
 const parseDay = (value) => {
   const raw = text(value, 20);
   if (!raw) return undefined;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw) || /^(\d{4})(\d{2})(\d{2})$/.exec(raw);
-  if (!m) return null;
-  const date = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  const real = date.getUTCFullYear() === +m[1] && date.getUTCMonth() === +m[2] - 1 && date.getUTCDate() === +m[3];
+  let year, month, day;
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw) || /^(\d{4})(\d{2})(\d{2})$/.exec(raw);
+  if (m) {
+    [year, month, day] = [+m[1], +m[2], +m[3]];
+  } else if ((m = /^(\d{1,2})-([a-z]{3})-(\d{2}|\d{4})$/i.exec(raw))) {
+    day = +m[1];
+    month = MONTHS.indexOf(m[2].toLowerCase()) + 1;
+    year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+  } else {
+    return null;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const real = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
   return real ? date : null;
 };
 
@@ -61,7 +73,7 @@ const parseRecord = (raw, index) => {
 
   const billDate = parseDay(raw.bill_date);
   if (billDate === undefined) bad('bill_date', 'bill_date is required');
-  if (billDate === null) bad('bill_date', 'bill_date must be YYYY-MM-DD');
+  if (billDate === null) bad('bill_date', 'bill_date must be YYYY-MM-DD or DD-Mon-YY (e.g. 17-Nov-26)');
 
   const pendingPaise = parsePaise(raw.pending_amount);
   if (pendingPaise === undefined) bad('pending_amount', 'pending_amount is required');
