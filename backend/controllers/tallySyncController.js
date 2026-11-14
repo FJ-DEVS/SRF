@@ -132,6 +132,7 @@ exports.syncOutstandings = async (req, res) => {
     const parsed = parseSyncPayload(req.body);
     if (parsed.error) {
       const { status, code, message, errors } = parsed.error;
+      console.warn(`Tally sync rejected (${code}): ${message}`, errors ? JSON.stringify(errors.slice(0, 5)) : '');
       return sendError(res, status, code, message, errors ? { errors } : {});
     }
     const { dealer, records } = parsed;

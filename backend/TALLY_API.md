@@ -77,7 +77,7 @@ Send one entry in `Bills` per pending bill (bill-wise outstanding), as in Tally'
 
 Formats:
 
-- **Dates:** `YYYY-MM-DD`. Tally's `YYYYMMDD` is also accepted.
+- **Dates:** `YYYY-MM-DD`. Tally's `YYYYMMDD` and `DD-Mon-YY` / `DD-Mon-YYYY` (`17-Nov-26`) are also accepted.
 - **Amounts:** rupees with up to 2 decimals, as a JSON number (`25000.00`) or a string (`"25,000.00"`).
 - **Overdue days / age:** not needed. SRF calculates them from `bill_date`.
 - **One bill, one entry:** within a request, the same `bill_number` may appear only once per customer.

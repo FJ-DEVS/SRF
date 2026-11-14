@@ -17,6 +17,7 @@ const tallyAuth = async (req, res, next) => {
   try {
     const key = keyOf(req);
     if (!key) {
+      console.warn(`Tally API: ${req.method} ${req.originalUrl} rejected — no API key sent`);
       return res.status(401).json({
         success: false,
         error_code: 'UNAUTHORIZED',
@@ -28,6 +29,7 @@ const tallyAuth = async (req, res, next) => {
     const sent = Buffer.from(hashKey(key));
     const kept = Buffer.from(config?.apiKeyHash || '');
     if (sent.length !== kept.length || !crypto.timingSafeEqual(sent, kept)) {
+      console.warn(`Tally API: ${req.method} ${req.originalUrl} rejected — API key ending "${key.slice(-4)}" does not match`);
       return res.status(401).json({
         success: false,
         error_code: 'UNAUTHORIZED',
