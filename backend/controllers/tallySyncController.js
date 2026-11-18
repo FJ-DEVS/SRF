@@ -121,21 +121,15 @@ const todayIST = () => {
   return new Date(`${ymd}T00:00:00Z`);
 };
 
-// POST /api/v1/tally/outstandings/sync
+// Stores a parsed outstanding list (see parseSyncPayload) as the dealer's
+// complete figures. It is staged under a snapshot of its own and swapped in
+// with one write at the end, so a run that dies half-way leaves the previous
+// figures live — the failed attempt is cleaned up and the error rethrown.
 //
-// The body is the dealer's complete outstanding list (see TALLY_API.md). It is
-// staged under a snapshot of its own and swapped in with one write at the end,
-// so a request that dies half-way leaves the previous figures live.
-exports.syncOutstandings = async (req, res) => {
+// Used by the Tally push below and by the admin's XML import.
+const ingestOutstandings = async ({ dealer, records }, syncType = 'FULL') => {
   let log = null;
   try {
-    const parsed = parseSyncPayload(req.body);
-    if (parsed.error) {
-      const { status, code, message, errors } = parsed.error;
-      console.warn(`Tally sync rejected (${code}): ${message}`, errors ? JSON.stringify(errors.slice(0, 5)) : '');
-      return sendError(res, status, code, message, errors ? { errors } : {});
-    }
-    const { dealer, records } = parsed;
     const syncId = newSyncId();
     const asOfDate = todayIST();
 
@@ -143,7 +137,7 @@ exports.syncOutstandings = async (req, res) => {
       companyGuid: dealer.key,
       companyName: dealer.name,
       syncId,
-      syncType: 'FULL',
+      syncType,
       asOfDate,
       batches: [{ number: 1, records: records.length, receivedAt: new Date() }],
       receivedRecords: records.length,
@@ -196,25 +190,56 @@ exports.syncOutstandings = async (req, res) => {
 
     getIO().emit('tally_updated');
 
-    res.status(200).json({
-      success: true,
-      message: 'Outstanding data synchronized',
-      sync_id: syncId,
-      dealer_name: dealer.name,
-      received_bills: records.length,
-      stored_bills: totals.bills,
-      settled_bills: records.length - ops.length,
+    return {
+      syncId,
+      dealerName: dealer.name,
+      receivedBills: records.length,
+      storedBills: totals.bills,
+      settledBills: records.length - ops.length,
       customers: totals.ledgers,
-      outstanding_amount: rupees(totals.pendingPaise),
-      unmapped_customers: unmappedLedgers
-    });
+      pendingPaise: totals.pendingPaise,
+      unmappedLedgers
+    };
   } catch (error) {
-    console.error('Tally sync error:', error);
     // Leave nothing half-written behind: the old snapshot is still the live one
     if (log) {
       await TallyOutstanding.deleteMany({ companyGuid: log.companyGuid, snapshotId: log.syncId }).catch(() => {});
       await TallySync.updateOne({ _id: log._id }, { $set: { status: 'failed', error: error.message } }).catch(() => {});
     }
+    throw error;
+  }
+};
+exports.ingestOutstandings = ingestOutstandings;
+
+// POST /api/v1/tally/outstandings/sync
+//
+// The body is the dealer's complete outstanding list (see TALLY_API.md); it
+// replaces whatever was held for that dealer.
+exports.syncOutstandings = async (req, res) => {
+  try {
+    const parsed = parseSyncPayload(req.body);
+    if (parsed.error) {
+      const { status, code, message, errors } = parsed.error;
+      console.warn(`Tally sync rejected (${code}): ${message}`, errors ? JSON.stringify(errors.slice(0, 5)) : '');
+      return sendError(res, status, code, message, errors ? { errors } : {});
+    }
+
+    const result = await ingestOutstandings(parsed, 'FULL');
+
+    res.status(200).json({
+      success: true,
+      message: 'Outstanding data synchronized',
+      sync_id: result.syncId,
+      dealer_name: result.dealerName,
+      received_bills: result.receivedBills,
+      stored_bills: result.storedBills,
+      settled_bills: result.settledBills,
+      customers: result.customers,
+      outstanding_amount: rupees(result.pendingPaise),
+      unmapped_customers: result.unmappedLedgers
+    });
+  } catch (error) {
+    console.error('Tally sync error:', error);
     sendError(res, 500, 'SERVER_ERROR', 'Internal server error — nothing was changed, the request can be sent again safely');
   }
 };

@@ -11,7 +11,8 @@ const Customer = require('../models/Customer');
 const { getIO } = require('../socket');
 const { hashKey } = require('../middleware/tallyAuth');
 const { escapeRegex } = require('../utils/duplicateCheck');
-const { parseDay, parsePaise } = require('../utils/tallyPayload');
+const { parseDay, parsePaise, parseSyncPayload } = require('../utils/tallyPayload');
+const { ingestOutstandings } = require('./tallySyncController');
 
 const rupees = (paise) => (paise === null || paise === undefined ? null : Math.round(paise) / 100);
 const isId = (value) => mongoose.Types.ObjectId.isValid(value);
@@ -409,6 +410,43 @@ exports.getParties = async (req, res) => {
   } catch (error) {
     console.error('Get tally parties error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// Import outstandings from a Tally XML export (Bills Receivable), read into
+// bills by the admin app. The body is the same shape the Tally push sends —
+// { dealer_name, Bills: [{ bill_number, bill_date, due_date, customer_name,
+// pending_amount }] } — and, like a push, it replaces everything held for that
+// company. (Admin only)
+exports.importOutstandings = async (req, res) => {
+  try {
+    const parsed = parseSyncPayload(req.body);
+    if (parsed.error) {
+      const { status, message, errors } = parsed.error;
+      return res.status(status).json({ success: false, message, errors });
+    }
+    if (!parsed.records.length) {
+      return res.status(400).json({ success: false, message: 'The file has no bills in it — nothing was changed' });
+    }
+
+    const result = await ingestOutstandings(parsed, 'XML_IMPORT');
+    res.status(200).json({
+      success: true,
+      message: `Imported ${result.storedBills} pending bill(s) for ${result.customers} part${result.customers === 1 ? 'y' : 'ies'}`,
+      data: {
+        syncId: result.syncId,
+        companyName: result.dealerName,
+        receivedBills: result.receivedBills,
+        storedBills: result.storedBills,
+        settledBills: result.settledBills,
+        parties: result.customers,
+        pendingAmount: rupees(result.pendingPaise),
+        unmappedLedgers: result.unmappedLedgers
+      }
+    });
+  } catch (error) {
+    console.error('Import tally XML error:', error);
+    res.status(500).json({ success: false, message: 'Import failed — nothing was changed, the previous figures are still live' });
   }
 };
 

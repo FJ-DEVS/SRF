@@ -20,6 +20,9 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Mounted ahead of the JSON parser below: the Tally API parses its own, larger bodies
 app.use('/api/v1/tally', require('./routes/tallyApi'));
+// An imported Tally XML export arrives as one list of every pending bill —
+// hundreds of KB. Parsed here first; the default parser below skips a parsed body.
+app.use('/api/tally/outstandings/import', express.json({ limit: '10mb' }));
 
 app.use(express.json());
 

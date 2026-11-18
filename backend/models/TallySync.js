@@ -20,7 +20,8 @@ const tallySyncSchema = new mongoose.Schema({
   },
   syncType: {
     type: String,
-    enum: ['FULL', 'INCREMENTAL'],
+    // XML_IMPORT — a Tally XML export uploaded by the admin rather than pushed
+    enum: ['FULL', 'INCREMENTAL', 'XML_IMPORT'],
     default: 'FULL'
   },
   asOfDate: {

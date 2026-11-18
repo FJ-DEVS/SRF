@@ -82,6 +82,11 @@ const parseRecord = (raw, index) => {
   const closingPaise = parsePaise(raw.closing_amount);
   if (closingPaise === null) bad('closing_amount', 'closing_amount must be a number');
 
+  // Optional — a Tally XML export carries each bill's due date; without one a
+  // bill is due on its own date, as Tally treats it
+  const dueDate = parseDay(raw.due_date);
+  if (dueDate === null) bad('due_date', 'due_date must be YYYY-MM-DD or DD-Mon-YY (e.g. 17-Nov-26)');
+
   if (errors.length) return { errors };
 
   return {
@@ -104,8 +109,7 @@ const parseRecord = (raw, index) => {
       voucherType: '',
       billReference: billNumber,
       voucherDate: billDate,
-      // No credit period is sent, and Tally then treats a bill as due on its date
-      dueDate: billDate,
+      dueDate: dueDate || billDate,
       originalPaise: null,
       paidPaise: null,
       pendingPaise,
