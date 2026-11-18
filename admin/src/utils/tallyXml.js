@@ -149,9 +149,9 @@ export const readTallyBillsXml = async (file) => {
   return { bills, problems, summary };
 };
 
-// Bills → the body the import endpoint (and the Tally push) takes
-export const toImportPayload = (companyName, bills) => ({
-  dealer_name: companyName,
+// Bills → the body the import endpoint takes. The company is not sent: the
+// ERP serves one, and the server files the import under it.
+export const toImportPayload = (bills) => ({
   Bills: bills.map((b) => ({
     bill_number: b.ref,
     bill_date: b.billDate,

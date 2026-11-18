@@ -278,7 +278,7 @@ const Outstandings = () => {
     setAlert({
       type: 'success',
       title: 'Outstandings imported',
-      message: `${d.storedBills.toLocaleString('en-IN')} pending bill(s) across ${d.parties} parties, ${money(d.pendingAmount)} in all, are now live for ${d.companyName}.` +
+      message: `${d.storedBills.toLocaleString('en-IN')} pending bill(s) across ${d.parties} parties, ${money(d.pendingAmount)} in all, are now live.` +
         (d.unmappedLedgers ? ` ${d.unmappedLedgers} party ledger(s) still need mapping to a customer.` : '')
     });
   };
@@ -731,7 +731,6 @@ const Outstandings = () => {
         isOpen={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={handleImported}
-        companies={status?.companies || []}
       />
     </div>
   );

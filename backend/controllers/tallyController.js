@@ -413,14 +413,19 @@ exports.getParties = async (req, res) => {
   }
 };
 
+// The one Tally company this ERP serves. An import goes to the company already
+// held here (so a later import replaces it, never doubles it), or to this name
+// when nothing has been imported or synced yet.
+const DEFAULT_COMPANY_NAME = 'Sky Decor Laminates';
+
 // Import outstandings from a Tally XML export (Bills Receivable), read into
-// bills by the admin app. The body is the same shape the Tally push sends —
-// { dealer_name, Bills: [{ bill_number, bill_date, due_date, customer_name,
-// pending_amount }] } — and, like a push, it replaces everything held for that
-// company. (Admin only)
+// bills by the admin app. The body is { Bills: [{ bill_number, bill_date,
+// due_date, customer_name, pending_amount }] }, the shape the Tally push sends,
+// and like a push it replaces everything held for the company. (Admin only)
 exports.importOutstandings = async (req, res) => {
   try {
-    const parsed = parseSyncPayload(req.body);
+    const current = await TallyCompany.findOne().sort({ lastSyncedAt: -1, updatedAt: -1 }).lean();
+    const parsed = parseSyncPayload({ ...req.body, dealer_name: current?.name || DEFAULT_COMPANY_NAME });
     if (parsed.error) {
       const { status, message, errors } = parsed.error;
       return res.status(status).json({ success: false, message, errors });
