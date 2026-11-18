@@ -8,9 +8,10 @@ import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
 import FilterPanel from '../components/FilterPanel';
+import ImportTallyXmlModal from '../components/ImportTallyXmlModal';
 import {
   Search, Download, IndianRupee, AlertTriangle, Users, ReceiptText, Link2Off, X, ArrowRight,
-  RefreshCw, SlidersHorizontal, WalletCards
+  RefreshCw, SlidersHorizontal, WalletCards, FileUp
 } from 'lucide-react';
 
 // Values match PARTY_SORTS / BILL_SORTS in backend/controllers/tallyController.js
@@ -132,8 +133,9 @@ const Outstandings = () => {
   const [pageSize, setPageSize] = useState(25);
   const [pagination, setPagination] = useState({ total: 0, pages: 0 });
   const [alert, setAlert] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
-  const sort = view === 'parties' ? partySort : billSort;
+  const sort =view === 'parties' ? partySort : billSort;
   const moreCount = Object.values(filters).filter(Boolean).length;
 
   // The query both the list and the export send
@@ -268,6 +270,19 @@ const Outstandings = () => {
     }
   };
 
+  const handleImported = (result) => {
+    setImportOpen(false);
+    fetchData();
+    fetchStatus();
+    const d = result.data;
+    setAlert({
+      type: 'success',
+      title: 'Outstandings imported',
+      message: `${d.storedBills.toLocaleString('en-IN')} pending bill(s) across ${d.parties} parties, ${money(d.pendingAmount)} in all, are now live for ${d.companyName}.` +
+        (d.unmappedLedgers ? ` ${d.unmappedLedgers} party ledger(s) still need mapping to a customer.` : '')
+    });
+  };
+
   const company = status?.companies?.[0];
   const neverSynced = status && status.companies.length === 0;
   const slabTotal = slabs.reduce((sum, s) => sum + Math.max(s.amount, 0), 0);
@@ -292,6 +307,10 @@ const Outstandings = () => {
           Tally sync
           <ArrowRight className="h-3.5 w-3.5" />
         </Link>
+        <button onClick={() => setImportOpen(true)} disabled={!status} className="srf-btn srf-btn-secondary">
+          <FileUp className="h-4 w-4 text-slate-400" />
+          Import XML
+        </button>
         <button onClick={handleExport} disabled={loading || exporting || rows.length === 0} className="srf-btn srf-btn-secondary">
           <Download className="h-4 w-4 text-slate-400" />
           {exporting ? 'Exporting…' : 'Export Excel'}
@@ -305,9 +324,15 @@ const Outstandings = () => {
           </span>
           <p className="mt-3 text-sm font-semibold text-slate-700">No outstandings received from Tally yet</p>
           <p className="mt-1 max-w-sm text-xs text-slate-400">
-            Generate an API key and share the endpoint with the Tally team. Pending bills show up here after their first sync.
+            Import a Bills Receivable XML exported from Tally, or generate an API key so Tally pushes them automatically.
           </p>
-          <Link to="/tally-sync" className="srf-btn srf-btn-primary mt-4">Set up Tally sync</Link>
+          <div className="mt-4 flex flex-wrap justify-center gap-2.5">
+            <button type="button" onClick={() => setImportOpen(true)} className="srf-btn srf-btn-primary">
+              <FileUp className="h-4 w-4" />
+              Import Tally XML
+            </button>
+            <Link to="/tally-sync" className="srf-btn srf-btn-secondary">Set up Tally sync</Link>
+          </div>
         </div>
       ) : (
         <>
@@ -699,7 +724,14 @@ const Outstandings = () => {
         onClose={() => setAlert(null)}
         title={alert?.title}
         message={alert?.message}
-        type="error"
+        type={alert?.type || 'error'}
+      />
+
+      <ImportTallyXmlModal
+        isOpen={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleImported}
+        companies={status?.companies || []}
       />
     </div>
   );

@@ -8,6 +8,8 @@ const authMiddleware = require('../middleware/auth');
 router.get('/status', authMiddleware, tallyController.getStatus);
 router.get('/outstandings/parties', authMiddleware, tallyController.getParties);
 router.get('/outstandings/bills', authMiddleware, tallyController.getBills);
+// Its body is parsed by a larger JSON parser mounted for this path in server.js
+router.post('/outstandings/import', authMiddleware, tallyController.importOutstandings);
 router.get('/syncs', authMiddleware, tallyController.getSyncs);
 router.get('/ledgers', authMiddleware, tallyController.getLedgers);
 router.put('/ledgers/:id/customer', authMiddleware, tallyController.setLedgerCustomer);
