@@ -3,8 +3,6 @@ import { FileUp, FileCode2, AlertTriangle, X } from 'lucide-react';
 import api from '../utils/api';
 import { readTallyBillsXml, toImportPayload } from '../utils/tallyXml';
 
-const NEW_COMPANY = '__new__';
-
 const money = (value) =>
   `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -12,20 +10,17 @@ const day = (iso) =>
   iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'UTC' }) : '—';
 
 // Mounted only while open, so every import starts from an empty form
-const ImportForm = ({ onClose, onImported, companies }) => {
+const ImportForm = ({ onClose, onImported }) => {
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [parsed, setParsed] = useState(null);
   const [readError, setReadError] = useState('');
   const [reading, setReading] = useState(false);
-  const [company, setCompany] = useState(companies[0]?.name || NEW_COMPANY);
-  const [newCompany, setNewCompany] = useState('');
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
   const [dragging, setDragging] = useState(false);
 
-  const companyName = (company === NEW_COMPANY ? newCompany : company).trim();
-  const canImport = parsed && parsed.bills.length > 0 && parsed.problems.length === 0 && companyName && !importing;
+  const canImport = parsed && parsed.bills.length > 0 && parsed.problems.length === 0 && !importing;
 
   const pick = async (picked) => {
     if (!picked) return;
@@ -49,7 +44,7 @@ const ImportForm = ({ onClose, onImported, companies }) => {
     try {
       setImporting(true);
       setImportError('');
-      const response = await api.post('/tally/outstandings/import', toImportPayload(companyName, parsed.bills));
+      const response = await api.post('/tally/outstandings/import', toImportPayload(parsed.bills));
       onImported(response.data);
     } catch (error) {
       const data = error.response?.data;
@@ -71,7 +66,7 @@ const ImportForm = ({ onClose, onImported, companies }) => {
           <div>
             <h3 className="font-display text-base font-bold text-slate-900">Import Tally XML</h3>
             <p className="mt-0.5 text-[13px] text-slate-500">
-              A Bills Receivable export from Tally. It replaces every outstanding currently held for the company.
+              A Bills Receivable export from Tally. It replaces all the outstandings currently shown here.
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={importing} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
@@ -124,7 +119,7 @@ const ImportForm = ({ onClose, onImported, companies }) => {
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg border border-slate-200 p-2.5">
                     <p className="srf-mcard-label">{label}</p>
-                    <p className="mt-1 truncate text-sm font-bold tabular-nums text-slate-900">{value}</p>
+                    <p className="mt-1 text-sm font-bold leading-snug tabular-nums text-slate-900">{value}</p>
                   </div>
                 ))}
               </div>
@@ -174,33 +169,6 @@ const ImportForm = ({ onClose, onImported, companies }) => {
                 </div>
               )}
 
-              {/* Which company it replaces */}
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                <label className="flex flex-col gap-1">
-                  <span className="srf-mcard-label">Company</span>
-                  <select value={company} onChange={(e) => setCompany(e.target.value)}>
-                    {companies.map((c) => <option key={c.guid} value={c.name}>{c.name}</option>)}
-                    <option value={NEW_COMPANY}>New company…</option>
-                  </select>
-                </label>
-                {company === NEW_COMPANY && (
-                  <label className="flex flex-col gap-1">
-                    <span className="srf-mcard-label">Company name</span>
-                    <input
-                      type="text"
-                      value={newCompany}
-                      onChange={(e) => setNewCompany(e.target.value)}
-                      placeholder="As named in Tally"
-                      autoFocus
-                    />
-                  </label>
-                )}
-              </div>
-              {company === NEW_COMPANY && companies.length > 0 && (
-                <p className="text-xs text-amber-700">
-                  A new company is shown alongside {companies.map((c) => c.name).join(', ')} — pick the existing one to replace its figures instead.
-                </p>
-              )}
             </>
           )}
 
@@ -222,9 +190,9 @@ const ImportForm = ({ onClose, onImported, companies }) => {
   );
 };
 
-const ImportTallyXmlModal = ({ isOpen, onClose, onImported, companies = [] }) => {
+const ImportTallyXmlModal = ({ isOpen, onClose, onImported }) => {
   if (!isOpen) return null;
-  return <ImportForm onClose={onClose} onImported={onImported} companies={companies} />;
+  return <ImportForm onClose={onClose} onImported={onImported} />;
 };
 
 export default ImportTallyXmlModal;
