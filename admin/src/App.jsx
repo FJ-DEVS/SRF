@@ -18,6 +18,7 @@ import Cargo from './pages/Cargo';
 import Orders from './pages/Orders';
 import FailedOrders from './pages/FailedOrders';
 import Consolidation from './pages/Consolidation';
+import CategorySales from './pages/CategorySales';
 import Schemas from './pages/Schemas';
 import SchemaLeaderboard from './pages/SchemaLeaderboard';
 import Database from './pages/Database';
@@ -117,6 +118,7 @@ const adminPages = [
   { path: '/orders', element: <Orders /> },
   { path: '/failed-orders', element: <FailedOrders /> },
   { path: '/consolidation', element: <Consolidation /> },
+  { path: '/category-sales', element: <CategorySales /> },
   { path: '/schemas', element: <Schemas /> },
   { path: '/schema-leaderboard', element: <SchemaLeaderboard /> },
   { path: '/outstandings', element: <Outstandings /> },

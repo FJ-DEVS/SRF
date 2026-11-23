@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { X, Eye, EyeOff, Edit2 } from 'lucide-react';
 
-const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = null }) => {
+// wide: a broader panel with the fields in two columns, for when `children`
+// (shown below the fields) needs the room — a chart, say
+const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = null, wide = false, children = null }) => {
   const [visiblePasswords, setVisiblePasswords] = useState({});
 
   if (!isOpen) return null;
@@ -125,7 +127,7 @@ const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = nu
   return (
     <div className="srf-modal-backdrop" onClick={handleClose}>
       <div
-        className="srf-modal-panel max-w-lg w-full"
+        className={`srf-modal-panel w-full ${wide ? 'max-w-5xl' : 'max-w-lg'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -141,9 +143,14 @@ const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = nu
 
         {/* Fields */}
         <div className="srf-modal-body">
-          <div className="divide-y divide-slate-100">
+          <div className={wide ? 'grid gap-x-8 sm:grid-cols-2' : 'divide-y divide-slate-100'}>
             {fields.map((field, idx) => (
-              <div key={idx} className="flex items-start gap-4 py-3 first:pt-0 last:pb-0">
+              <div
+                key={idx}
+                className={wide
+                  ? 'flex items-start gap-4 border-b border-slate-100 py-2.5'
+                  : 'flex items-start gap-4 py-3 first:pt-0 last:pb-0'}
+              >
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider w-32 flex-shrink-0 pt-0.5">
                   {field.label}
                 </span>
@@ -153,6 +160,7 @@ const DetailModal = ({ isOpen, onClose, title, fields = [], onEdit, actions = nu
               </div>
             ))}
           </div>
+          {children && <div className="mt-5">{children}</div>}
         </div>
 
         {/* Footer */}

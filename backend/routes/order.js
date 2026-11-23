@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
+const categorySalesController = require('../controllers/categorySalesController');
 const authMiddleware = require('../middleware/auth');
 const { roleAuth } = require('../middleware/roleAuth');
 
@@ -32,6 +33,11 @@ const crmAuthMiddleware = roleAuth('crm');
 
 // Dashboard stats - Admin and accounts manager
 router.get('/stats', roleAuth('admin', 'accounts'), orderController.getDashboardStats);
+
+// Dashboard category sales chart and its per-category salesman breakdown - Admin only
+router.get('/stats/category-sales', authMiddleware, categorySalesController.getCategorySales);
+router.get('/stats/category-sales/salesmen', authMiddleware, categorySalesController.getCategorySalesBySalesman);
+router.get('/stats/category-sales/customer/:id', authMiddleware, categorySalesController.getCustomerCategorySales);
 
 // Consolidation report - Admin only
 router.get('/consolidation', authMiddleware, orderController.getConsolidationReport);
