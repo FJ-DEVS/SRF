@@ -10,12 +10,17 @@
 // customer ordering in the app to the customer's lists only. Admins are not
 // limited.
 //
+// A viewer orders nothing and only reads the stock list: their permissions
+// name the item categories they see and whether the stock count and / or the
+// rate of each item is shown (models/Viewer.js).
+//
 // Categories are kept by id, since they can be renamed, and resolved to the
 // names items carry when a query needs them.
 const mongoose = require('mongoose');
 const Category = require('../models/Category');
 const Salesman = require('../models/Salesman');
 const Customer = require('../models/Customer');
+const Viewer = require('../models/Viewer');
 
 // A permission list from a request body: { list } — null meaning "all" — or
 // { error } when it is neither null nor an array of ids
@@ -50,10 +55,14 @@ const allowedCargoIds = async (user) => {
   return null;
 };
 
-// The category names open to a salesman and / or a customer — both lists
-// apply when both are given — or null when neither narrows them
-const allowedCategoryNames = async ({ salesmanId, customerId } = {}) => {
+// The category names open to a salesman, a customer and / or a viewer — every
+// list given applies — or null when none narrows them
+const allowedCategoryNames = async ({ salesmanId, customerId, viewerId } = {}) => {
   const lists = [];
+  if (viewerId && mongoose.Types.ObjectId.isValid(viewerId)) {
+    const viewer = await Viewer.findById(viewerId).select('allowedCategories').lean();
+    if (viewer?.allowedCategories) lists.push(viewer.allowedCategories.map(String));
+  }
   if (salesmanId) {
     const salesman = await salesmanPermissions(salesmanId);
     if (salesman?.allowedCategories) lists.push(salesman.allowedCategories.map(String));
@@ -74,8 +83,33 @@ const allowedCategoryNames = async ({ salesmanId, customerId } = {}) => {
 const firstForbiddenItem = (items, names) =>
   names === null ? undefined : items.find((item) => !names.includes(item.category || ''));
 
+// Which of an item's stock fields a signed-in user may read: { quantity,
+// price }. Only viewers are limited — everyone else sees both.
+const visibleStockFields = async (user) => {
+  if (user?.role !== 'viewer') return { quantity: true, price: true };
+  const viewer = mongoose.Types.ObjectId.isValid(user.id)
+    ? await Viewer.findById(user.id).select('canViewQuantity canViewPrice').lean()
+    : null;
+  return {
+    quantity: viewer?.canViewQuantity !== false,
+    price: viewer?.canViewPrice !== false
+  };
+};
+
+// The category scope of a signed-in app user, for allowedCategoryNames — only
+// their own list: a customer's list limits what the customer orders, not what
+// a salesman orders for them
+const ownCategoryScope = (user) => {
+  if (user?.role === 'salesman') return { salesmanId: user.id };
+  if (user?.role === 'customer') return { customerId: user.id };
+  if (user?.role === 'viewer') return { viewerId: user.id };
+  return null;
+};
+
 module.exports = {
   parseIdList,
+  visibleStockFields,
+  ownCategoryScope,
   allowedCustomerIds,
   allowedCargoIds,
   allowedCategoryNames,

@@ -2,7 +2,7 @@ const CrmManager = require('../models/CrmManager');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
-const { getIO } = require('../socket');
+const { revokeSession } = require('../socket');
 const { applySort } = require('../utils/listSort');
 
 // Login customer relation manager
@@ -269,7 +269,7 @@ exports.deleteCrmManager = async (req, res) => {
 
     // Their token is already dead server-side (middleware/roleAuth.js); this
     // makes an open CRM app log itself out instantly.
-    getIO().emit('session_revoked', { role: 'crm', id: String(manager._id) });
+    revokeSession('crm', manager._id);
 
     res.status(200).json({
       success: true,

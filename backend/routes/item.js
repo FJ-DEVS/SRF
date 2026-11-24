@@ -5,9 +5,10 @@ const authMiddleware = require('../middleware/auth');
 const { roleAuth } = require('../middleware/roleAuth');
 
 // Mobile app routes (read-only) — must be before /:id to avoid conflict.
-// Customers signed into the app read the same catalogue, narrowed to the
-// categories open to them.
-const appAuthMiddleware = roleAuth('salesman', 'customer');
+// Customers and viewers signed into the app read the same catalogue, narrowed
+// to the categories open to them (and, for viewers, to the stock fields they
+// may see).
+const appAuthMiddleware = roleAuth('salesman', 'customer', 'viewer');
 router.get('/salesman/list', appAuthMiddleware, itemController.getItemsForSalesman);
 router.get('/salesman/:id', appAuthMiddleware, itemController.getItemByIdForSalesman);
 

@@ -2,7 +2,7 @@ const AccountsManager = require('../models/AccountsManager');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
-const { getIO } = require('../socket');
+const { revokeSession } = require('../socket');
 const { applySort } = require('../utils/listSort');
 
 // Login accounts manager
@@ -269,7 +269,7 @@ exports.deleteAccountsManager = async (req, res) => {
 
     // Their token is already dead server-side (middleware/roleAuth.js); this
     // makes an open accounts app log itself out instantly.
-    getIO().emit('session_revoked', { role: 'accounts', id: String(manager._id) });
+    revokeSession('accounts', manager._id);
 
     res.status(200).json({
       success: true,

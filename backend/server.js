@@ -48,6 +48,7 @@ const databaseRoutes = require('./routes/database');
 const reorderRoutes = require('./routes/reorder');
 const settingsRoutes = require('./routes/settings');
 const tallyRoutes = require('./routes/tally');
+const viewerRoutes = require('./routes/viewer');
 const Category = require('./models/Category');
 
 // Use routes
@@ -72,6 +73,7 @@ app.use('/api/database', databaseRoutes);
 app.use('/api/reorder', reorderRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/tally', tallyRoutes);
+app.use('/api/viewers', viewerRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];

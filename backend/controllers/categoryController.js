@@ -2,7 +2,7 @@ const Category = require('../models/Category');
 const Item = require('../models/Item');
 const Schema = require('../models/Schema');
 const jwt = require('jsonwebtoken');
-const { allowedCategoryNames } = require('../utils/permissions');
+const { allowedCategoryNames, ownCategoryScope } = require('../utils/permissions');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
 
 // Blank / missing check level means "not tracked"
@@ -54,18 +54,15 @@ const optionalUser = (req) => {
   }
 };
 
-// Get all categories. A salesman's or customer's token narrows them to the
-// categories that user may order — only their own permissions, since a
+// Get all categories. A salesman's, customer's or viewer's token narrows them
+// to the categories that user may order (or view) — only their own permissions, since a
 // customer's list limits what the customer orders, not what a salesman orders
 // for them. Anyone else may pass ?customer= to narrow them to those that may
 // be sold to that customer.
 exports.getAllCategories = async (req, res) => {
   try {
     const user = optionalUser(req);
-    let scope;
-    if (user?.role === 'salesman') scope = { salesmanId: user.id };
-    else if (user?.role === 'customer') scope = { customerId: user.id };
-    else scope = { customerId: req.query.customer };
+    const scope = ownCategoryScope(user) || { customerId: req.query.customer };
     const allowed = await allowedCategoryNames(scope);
     const categories = await Category.find(allowed ? { name: { $in: allowed } } : {}).sort({ name: 1 });
     res.status(200).json({ success: true, data: categories });

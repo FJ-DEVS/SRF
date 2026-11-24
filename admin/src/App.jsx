@@ -29,6 +29,7 @@ import Raks from './pages/Raks';
 import Rollers from './pages/Rollers';
 import AccountsUsers from './pages/AccountsUsers';
 import CrmUsers from './pages/CrmUsers';
+import Viewers from './pages/Viewers';
 import RollerLogin from './pages/roller/RollerLogin';
 import RollerOrders from './pages/roller/RollerOrders';
 import RollerPlacements from './pages/roller/RollerPlacements';
@@ -108,6 +109,7 @@ const adminPages = [
   { path: '/rollers', element: <Rollers /> },
   { path: '/accounts-users', element: <AccountsUsers /> },
   { path: '/crm-users', element: <CrmUsers /> },
+  { path: '/viewers', element: <Viewers /> },
   { path: '/customers', element: <Customers /> },
   { path: '/vendors', element: <Vendors /> },
   { path: '/items', element: <Items /> },

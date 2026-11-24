@@ -9,7 +9,7 @@ const { parseCheckLevel, categoryCheckLevels, decorateCheckLevel, belowCheckLeve
 const {
   findDuplicate, itemDuplicateQuery, itemDuplicateKey, itemIdentityUnchanged, itemDuplicateMessage
 } = require('../utils/duplicateCheck');
-const { allowedCategoryNames } = require('../utils/permissions');
+const { allowedCategoryNames, ownCategoryScope, visibleStockFields } = require('../utils/permissions');
 
 // Escape user input before using it inside a regex
 const escapeRegex = (str = '') => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -235,25 +235,42 @@ exports.updateItem = async (req, res) => {
   }
 };
 
-// Get all items (salesman / roller access)
+// An item as a user who may read only some stock fields gets it: the stock
+// count goes with everything worked out from it (the check level and whether
+// stock is below it), the rate on its own
+const withStockFields = (item, fields) => {
+  const out = { ...item };
+  if (!fields.quantity) {
+    for (const key of ['quantity', 'checkLevel', 'effectiveCheckLevel', 'belowCheckLevel']) delete out[key];
+  }
+  if (!fields.price) delete out.price;
+  return out;
+};
+
+// Get all items (salesman / customer / viewer / roller access)
 exports.getItemsForSalesman = async (req, res) => {
   try {
-    const { search, category, sort, page = 1, limit = 10 } = req.query;
+    const { search, category, page = 1, limit = 10 } = req.query;
+    let { sort } = req.query;
 
     const conditions = [];
 
-    // A salesman sees only the categories they may sell. The customer's own
-    // list limits only what the customer orders in the app, not what a
-    // salesman orders for them, so ?customer= does not narrow this.
-    if (req.user.role === 'salesman') {
-      const allowed = await allowedCategoryNames({ salesmanId: req.user.id });
+    // A salesman sees only the categories they may sell, a customer only
+    // those that may be sold to them, a viewer only those they may view. The
+    // customer's own list limits only what the customer orders in the app,
+    // not what a salesman orders for them, so ?customer= does not narrow this.
+    const scope = ownCategoryScope(req.user);
+    if (scope) {
+      const allowed = await allowedCategoryNames(scope);
       if (allowed) conditions.push({ category: { $in: allowed } });
     }
 
-    // A customer in the app sees only the categories that may be sold to them
-    if (req.user.role === 'customer') {
-      const allowed = await allowedCategoryNames({ customerId: req.user.id });
-      if (allowed) conditions.push({ category: { $in: allowed } });
+    // A viewer may be shown the stock count, the rate, or both. A field they
+    // may not read is left out — and cannot be sorted by either, since the
+    // order would give it away.
+    const fields = await visibleStockFields(req.user);
+    if ((!fields.price && /^price_/.test(sort)) || (!fields.quantity && /^qty_/.test(sort))) {
+      sort = undefined;
     }
 
     if (search) {
@@ -282,7 +299,10 @@ exports.getItemsForSalesman = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: items.map((item) => decorateCheckLevel(item, levelsByCategory)),
+      data: items.map((item) => withStockFields(decorateCheckLevel(item, levelsByCategory), fields)),
+      // Which stock fields this user is shown, so the app can leave out what
+      // it does not have rather than show it as 0
+      fields,
       pagination: {
         total,
         page: parseInt(page),
@@ -302,12 +322,11 @@ exports.getItemsForSalesman = async (req, res) => {
 // Get single item by ID (salesman access)
 exports.getItemByIdForSalesman = async (req, res) => {
   try {
-    let item = await Item.findById(req.params.id).select('name price quantity category');
+    let item = await Item.findById(req.params.id).select('name price quantity category').lean();
 
-    if (item && (req.user.role === 'salesman' || req.user.role === 'customer')) {
-      const allowed = await allowedCategoryNames(
-        req.user.role === 'salesman' ? { salesmanId: req.user.id } : { customerId: req.user.id }
-      );
+    const scope = ownCategoryScope(req.user);
+    if (item && scope) {
+      const allowed = await allowedCategoryNames(scope);
       if (allowed && !allowed.includes(item.category || '')) item = null;
     }
 
@@ -318,9 +337,11 @@ exports.getItemByIdForSalesman = async (req, res) => {
       });
     }
 
+    const fields = await visibleStockFields(req.user);
     res.status(200).json({
       success: true,
-      data: item
+      data: withStockFields(item, fields),
+      fields
     });
 
   } catch (error) {

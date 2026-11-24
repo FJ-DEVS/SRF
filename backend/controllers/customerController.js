@@ -2,7 +2,7 @@ const Customer = require('../models/Customer');
 const Salesman = require('../models/Salesman');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { getIO } = require('../socket');
+const { getIO, revokeSession } = require('../socket');
 const { parseIdList, allowedCustomerIds } = require('../utils/permissions');
 const { applySort } = require('../utils/listSort');
 const { exact, findDuplicate, isPlaceholderPhone } = require('../utils/duplicateCheck');
@@ -89,7 +89,7 @@ const appUsersUpdate = async (list, current) => {
 // Every login of a customer that has gone — sign those phones out now, not on
 // their next request
 const emitRevoked = (ids) => {
-  for (const id of ids) getIO().emit('session_revoked', { role: 'customer', id: String(id) });
+  for (const id of ids) revokeSession('customer', id);
 };
 
 // Only the admin sees a customer's app passwords; CRM managers read the same

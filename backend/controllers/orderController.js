@@ -10,7 +10,8 @@ const Category = require('../models/Category');
 const Schema = require('../models/Schema');
 const FailedOrder = require('../models/FailedOrder');
 const axios = require('axios');
-const { getIO } = require('../socket');
+const socket = require('../socket');
+const { getIO } = socket;
 const Placement = require('../models/Placement');
 const { consumePlacedStock, consumeFromRaks, restorePlacedStock } = require('../utils/placementMath');
 const { decorateCheckLevel, categoryCheckLevels, belowCheckLevelQuery } = require('../utils/checkLevel');
@@ -42,20 +43,19 @@ const categoryPermissionError = async (lines, user, session = null) => {
 };
 
 // Tell the apps that an order moved stock. The new quantities of its lines'
-// items ride along, so an app can patch its list in place instead of every
-// phone reloading the whole catalogue; older apps ignore them and reload as
-// before. Called after the commit, so the numbers are the ones now stored.
-// Fire and forget — a failure falls back to the bare event.
+// items ride along — to signed-in users allowed to see stock counts only (see
+// socket.js) — so an app can patch its list in place instead of every phone
+// reloading the whole catalogue; other sockets get the bare event and reload
+// over the API. Called after the commit, so the numbers are the ones now
+// stored. Fire and forget — a failure falls back to the bare event.
 const emitStockChanged = async (lines) => {
   try {
     const ids = [...new Set(lines.map((l) => String(l.item?._id ?? l.item)))];
     const items = await Item.find({ _id: { $in: ids } }).select('quantity').lean();
-    getIO().emit('items_updated', {
-      changes: items.map((i) => ({ id: String(i._id), quantity: i.quantity }))
-    });
+    socket.emitStockChanged(items.map((i) => ({ id: String(i._id), quantity: i.quantity })));
   } catch (error) {
     console.error('Emit stock change error:', error);
-    try { getIO().emit('items_updated'); } catch { /* socket not up */ }
+    try { socket.emitStockChanged(); } catch { /* socket not up */ }
   }
 };
 

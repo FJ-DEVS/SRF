@@ -2,7 +2,7 @@ const Roller = require('../models/Roller');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
-const { getIO } = require('../socket');
+const { revokeSession } = require('../socket');
 const { applySort } = require('../utils/listSort');
 
 // Login roller
@@ -272,7 +272,7 @@ exports.deleteRoller = async (req, res) => {
 
     // Their token is already dead server-side (middleware/roleAuth.js); this
     // makes an open roller app log itself out instantly.
-    getIO().emit('session_revoked', { role: 'roller', id: String(roller._id) });
+    revokeSession('roller', roller._id);
 
     res.status(200).json({
       success: true,

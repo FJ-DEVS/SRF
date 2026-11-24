@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
 const { applySort } = require('../utils/listSort');
-const { getIO } = require('../socket');
+const { getIO, revokeSession } = require('../socket');
 const { parseIdList } = require('../utils/permissions');
 
 // Login salesman
@@ -313,7 +313,7 @@ exports.deleteSalesman = async (req, res) => {
     // Kick the deleted salesman out of any app they still have open. Their token
     // is already dead server-side (see middleware/salesmanAuth.js); this makes
     // the client react instantly instead of on its next request.
-    getIO().emit('session_revoked', { role: 'salesman', id: String(salesman._id) });
+    revokeSession('salesman', salesman._id);
 
     res.status(200).json({
       success: true,

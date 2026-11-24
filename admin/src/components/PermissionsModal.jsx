@@ -103,11 +103,49 @@ const PermissionSection = ({ section, state, onChange }) => {
   );
 };
 
+// Yes/no permissions, one tickbox each, under one heading
+const ToggleGroup = ({ group, values, onChange }) => (
+  <div className="rounded-xl border border-slate-200">
+    <div className="px-3.5 py-3">
+      <p className="text-[13px] font-semibold text-slate-900">{group.label}</p>
+      {group.hint && <p className="text-[11px] text-slate-400">{group.hint}</p>}
+    </div>
+    <div className="border-t border-slate-100">
+      {group.toggles.map((t) => (
+        <label
+          key={t.key}
+          className="flex cursor-pointer items-start gap-2.5 border-b border-slate-50 px-3.5 py-2.5 last:border-0 hover:bg-slate-50"
+        >
+          <input
+            type="checkbox"
+            checked={values[t.key]}
+            onChange={(e) => onChange(t.key, e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600"
+          />
+          <span className="min-w-0">
+            <span className="block text-[13px] text-slate-800">{t.label}</span>
+            {t.description && <span className="block text-[11px] text-slate-400">{t.description}</span>}
+          </span>
+        </label>
+      ))}
+    </div>
+    {group.toggles.every((t) => !values[t.key]) && group.emptyWarning && (
+      <p className="px-3.5 pb-2.5 text-[11px] font-medium text-amber-600">{group.emptyWarning}</p>
+    )}
+  </div>
+);
+
 // Permission manager for one record. Each section is a list that is either
 // open to every option (saved as null) or limited to the ticked ones (saved
-// as an array of their values). `onSave` gets { [section.key]: null | [] }.
-const PermissionsModal = ({ title, subtitle, sections, loading = false, onClose, onSave }) => {
+// as an array of their values). `toggleGroup` optionally adds yes/no
+// permissions ({ label, hint, emptyWarning, toggles: [{ key, label,
+// description, value }] }). `onSave` gets { [section.key]: null | [],
+// [toggle.key]: true | false }.
+const PermissionsModal = ({ title, subtitle, sections, toggleGroup, loading = false, onClose, onSave }) => {
   const [states, setStates] = useState({});
+  const [toggleValues, setToggleValues] = useState(() =>
+    Object.fromEntries((toggleGroup?.toggles || []).map((t) => [t.key, Boolean(t.value)]))
+  );
   const [saving, setSaving] = useState(false);
 
   // A list that is not narrowed yet starts with everything ticked, so
@@ -127,6 +165,7 @@ const PermissionsModal = ({ title, subtitle, sections, loading = false, onClose,
         // Keep only options that still exist
         values[section.key] = all ? null : section.options.filter((o) => selected.has(o.value)).map((o) => o.value);
       });
+      Object.assign(values, toggleValues);
       await onSave(values);
     } finally {
       setSaving(false);
@@ -157,14 +196,23 @@ const PermissionsModal = ({ title, subtitle, sections, loading = false, onClose,
               <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-slate-500" />
             </div>
           ) : (
-            sections.map((section) => (
-              <PermissionSection
-                key={section.key}
-                section={section}
-                state={stateFor(section)}
-                onChange={(next) => setStates((prev) => ({ ...prev, [section.key]: next }))}
-              />
-            ))
+            <>
+              {sections.map((section) => (
+                <PermissionSection
+                  key={section.key}
+                  section={section}
+                  state={stateFor(section)}
+                  onChange={(next) => setStates((prev) => ({ ...prev, [section.key]: next }))}
+                />
+              ))}
+              {toggleGroup && (
+                <ToggleGroup
+                  group={toggleGroup}
+                  values={toggleValues}
+                  onChange={(key, checked) => setToggleValues((prev) => ({ ...prev, [key]: checked }))}
+                />
+              )}
+            </>
           )}
         </div>
 
