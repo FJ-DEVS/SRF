@@ -1,6 +1,7 @@
 const Category = require('../models/Category');
 const Item = require('../models/Item');
 const Schema = require('../models/Schema');
+const ClosingStock = require('../models/ClosingStock');
 const jwt = require('jsonwebtoken');
 const { allowedCategoryNames, ownCategoryScope } = require('../utils/permissions');
 const { exact, findDuplicate } = require('../utils/duplicateCheck');
@@ -11,6 +12,16 @@ const parseCheckLevel = (value) => {
   if (value === null || value === '') return null;
   const num = Number(value);
   return isNaN(num) || num < 0 ? null : num;
+};
+
+// Blank growth means "no sales target"; otherwise a percent, -100 to 1000.
+// Returns undefined (not sent), null, a number, or false when it is invalid.
+const parseGrowth = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < -100 || num > 1000) return false;
+  return Math.round(num * 10) / 10;
 };
 
 // Create category
@@ -75,7 +86,7 @@ exports.getAllCategories = async (req, res) => {
 // Update category — renaming cascades the new name to items using it
 exports.updateCategory = async (req, res) => {
   try {
-    const { name, checkLevel } = req.body;
+    const { name, checkLevel, growthTarget } = req.body;
 
     const category = await Category.findById(req.params.id);
     if (!category) {
@@ -85,7 +96,13 @@ exports.updateCategory = async (req, res) => {
     const parsedCheckLevel = parseCheckLevel(checkLevel);
     if (parsedCheckLevel !== undefined) category.checkLevel = parsedCheckLevel;
 
-    // Check-level-only updates leave the name alone
+    const parsedGrowth = parseGrowth(growthTarget);
+    if (parsedGrowth === false) {
+      return res.status(400).json({ success: false, message: 'Growth must be a percent between -100 and 1000' });
+    }
+    if (parsedGrowth !== undefined) category.growthTarget = parsedGrowth;
+
+    // Check-level and growth-only updates leave the name alone
     if (name === undefined) {
       await category.save();
       return res.status(200).json({ success: true, message: 'Category updated', data: category });
@@ -112,6 +129,13 @@ exports.updateCategory = async (req, res) => {
 
     // Items store the category name as a string — keep them in sync
     const result = await Item.updateMany({ category: oldName }, { category: newName });
+
+    // Closing stock figures follow the category to its new name. A month
+    // already held under the new name (from a category deleted earlier)
+    // keeps its own figure.
+    await ClosingStock.updateMany({ category: oldName }, { category: newName }).catch((error) => {
+      if (error.code !== 11000) throw error;
+    });
 
     // Schemas keep a display copy of the name alongside the id
     await Schema.updateMany(

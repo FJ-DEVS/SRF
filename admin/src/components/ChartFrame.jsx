@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize2, Minimize2 } from 'lucide-react';
+import PdfButton from './PdfButton';
+import { downloadReportPdf } from '../utils/reportPdf';
 
 // A chart card with a maximise / minimise switch. Maximised, the card fills
 // the whole screen, so the chart gets the room to be read and hovered
@@ -10,8 +12,32 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 //   actions:  controls shown beside the title (always)
 //   expandedActions: controls shown only when maximised — the page's own
 //             filter row is hidden behind the full-screen view
-const ChartFrame = ({ title, subtitle, actions = null, expandedActions = null, className = '', children }) => {
+//   pdf:      false to leave out the "Download as PDF" button. The PDF holds
+//             a picture of the chart, then pdfTables() — the figures behind
+//             it as real tables — under pdfDetails (period, filters …)
+const ChartFrame = ({
+  title,
+  subtitle,
+  actions = null,
+  expandedActions = null,
+  className = '',
+  pdf = true,
+  pdfTitle,
+  pdfDetails = [],
+  pdfTables = null,
+  children
+}) => {
   const [expanded, setExpanded] = useState(false);
+  const bodyRef = useRef(null);
+
+  const exportPdf = () =>
+    downloadReportPdf({
+      title: pdfTitle || title,
+      subtitle,
+      details: pdfDetails,
+      element: bodyRef.current,
+      tables: pdfTables ? pdfTables() : []
+    });
 
   useEffect(() => {
     if (!expanded) return undefined;
@@ -38,6 +64,7 @@ const ChartFrame = ({ title, subtitle, actions = null, expandedActions = null, c
       <div className="flex flex-wrap items-center gap-2">
         {actions}
         {expanded && expandedActions}
+        {pdf && <PdfButton onExport={exportPdf} />}
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -67,7 +94,7 @@ const ChartFrame = ({ title, subtitle, actions = null, expandedActions = null, c
             aria-label={title}
           >
             {header}
-            <div className="mt-3 flex min-h-0 flex-1 flex-col">{body}</div>
+            <div ref={bodyRef} className="mt-3 flex min-h-0 flex-1 flex-col bg-white">{body}</div>
           </div>,
           document.body
         )}
@@ -78,7 +105,7 @@ const ChartFrame = ({ title, subtitle, actions = null, expandedActions = null, c
   return (
     <div className={`srf-card p-4 sm:p-5 ${className}`}>
       {header}
-      <div className="mt-3">{body}</div>
+      <div ref={bodyRef} className="mt-3 bg-white">{body}</div>
     </div>
   );
 };

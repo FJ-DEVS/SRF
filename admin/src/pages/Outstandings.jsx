@@ -10,6 +10,8 @@ import SortSelect from '../components/SortSelect';
 import FilterPanel from '../components/FilterPanel';
 import ImportTallyXmlModal from '../components/ImportTallyXmlModal';
 import { useAuth } from '../context/AuthContext';
+import PdfButton from '../components/PdfButton';
+import { downloadReportPdf } from '../utils/reportPdf';
 import {
   Search, Download, IndianRupee, AlertTriangle, Users, ReceiptText, Link2Off, X, ArrowRight,
   RefreshCw, SlidersHorizontal, WalletCards, FileUp
@@ -234,11 +236,10 @@ const Outstandings = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleExport = async () => {
-    try {
-      setExporting(true);
-      const all = await fetchAll(`/tally/outstandings/${view}`, params);
-      const data = view === 'parties'
+  // Every row the filters match (not just this page), for Excel and PDF
+  const exportRows = async () => {
+    const all = await fetchAll(`/tally/outstandings/${view}`, params);
+    return view === 'parties'
         ? all.map((row) => ({
             Party: row.ledger?.name || '',
             Customer: row.ledger?.customer?.name || '',
@@ -264,6 +265,26 @@ const Outstandings = () => {
             Paid: row.paidAmount ?? '',
             Pending: row.pendingAmount
           }));
+  };
+
+  const handleExportPdf = async () => {
+    const data = await exportRows();
+    const columns = Object.keys(data[0] || { Party: '' });
+    const cell = (v) => (typeof v === 'number' ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : String(v ?? ''));
+    await downloadReportPdf({
+      title: view === 'parties' ? 'Outstandings — Party-wise' : 'Outstandings — Bills Receivable',
+      subtitle: company
+        ? `${company.name} · Tally figures as of ${day(company.asOfDate)} · last synced ${dateTime(company.lastSyncedAt)}`
+        : 'Customer pending bills, as pushed by Tally',
+      details: [`${data.length} row${data.length === 1 ? '' : 's'} matching the filters on screen · amounts in rupees`],
+      tables: [{ head: [columns], body: data.map((row) => columns.map((c) => cell(row[c]))) }]
+    });
+  };
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const data = await exportRows();
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(data), view === 'parties' ? 'Party-wise' : 'Bills Receivable');
       XLSX.writeFile(workbook, `outstandings-${view}_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -323,6 +344,7 @@ const Outstandings = () => {
           <Download className="h-4 w-4 text-slate-400" />
           {exporting ? 'Exporting…' : 'Export Excel'}
         </button>
+        <PdfButton label="Export PDF" onExport={handleExportPdf} className="!px-3.5 !py-2 !text-[13px] bg-white shadow-sm" />
       </PageHeader>
 
       {neverSynced ? (

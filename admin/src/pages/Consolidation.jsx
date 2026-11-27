@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { fetchAll } from '../utils/api';
 import PageHeader from '../components/PageHeader';
 import ChartFrame from '../components/ChartFrame';
+import PdfButton from '../components/PdfButton';
+import { downloadReportPdf, tablesIn } from '../utils/reportPdf';
+import { QUARTERS, fyOf, quarterOf, fyLabel, fyRange, quarterRange, previousQuarter, fyChoices } from '../utils/financialYear';
 import { useAuth } from '../context/AuthContext';
 import FilterPanel from '../components/FilterPanel';
 import SalesmanMonthlySales from '../components/SalesmanMonthlySales';
@@ -73,12 +76,27 @@ const PRESETS = [
   { value: '90d', label: 'Last 90 days' },
   { value: 'month', label: 'This month' },
   { value: 'year', label: 'This year' },
+  { value: 'quarter', label: 'This quarter' },
+  { value: 'lastQuarter', label: 'Last quarter' },
+  { value: 'fy', label: 'This financial year' },
   { value: 'custom', label: 'Custom range' }
 ];
+
+// Financial-year quarters (Q1 Apr – Jun … Q4 Jan – Mar) and whole years, as
+// presets "fy2026q1" / "fy2026" — see utils/financialYear.js
+const FY_PRESET = /^fy(\d{4})(?:q([1-4]))?$/;
 
 const toYMD = (d) => {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+// A { start, end } period (end = the day after) as inclusive dates, ending
+// today at the latest
+const spanUpToToday = ({ start, end }) => {
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
+  const now = new Date();
+  return { start: toYMD(start), end: toYMD(last < now ? last : now) };
 };
 
 const rangeForPreset = (preset) => {
@@ -93,7 +111,17 @@ const rangeForPreset = (preset) => {
     case '90d': return { start: daysAgo(89), end: today };
     case 'month': return { start: toYMD(new Date(now.getFullYear(), now.getMonth(), 1)), end: today };
     case 'year': return { start: toYMD(new Date(now.getFullYear(), 0, 1)), end: today };
-    default: return null;
+    case 'quarter': return spanUpToToday(quarterRange(fyOf(now), quarterOf(now)));
+    case 'lastQuarter': {
+      const prev = previousQuarter(fyOf(now), quarterOf(now));
+      return spanUpToToday(quarterRange(prev.fy, prev.q));
+    }
+    case 'fy': return spanUpToToday(fyRange(fyOf(now)));
+    default: {
+      const fy = FY_PRESET.exec(preset || '');
+      if (!fy) return null;
+      return spanUpToToday(fy[2] ? quarterRange(Number(fy[1]), Number(fy[2])) : fyRange(Number(fy[1])));
+    }
   }
 };
 
@@ -174,8 +202,8 @@ const fillHeight = (children) =>
       : child
   );
 
-const ChartCard = ({ title, subtitle, children }) => (
-  <ChartFrame title={title} subtitle={subtitle}>
+const ChartCard = ({ title, subtitle, details, children }) => (
+  <ChartFrame title={title} subtitle={subtitle} pdfTitle={`Consolidation — ${title}`} pdfDetails={details}>
     {(expanded) => (expanded ? <div className="min-h-0 flex-1">{fillHeight(children)}</div> : children)}
   </ChartFrame>
 );
@@ -191,6 +219,10 @@ const EmptyChart = () => (
 const Consolidation = () => {
   const { user } = useAuth();
   const isInvestor = user?.role === 'investor';
+  // The sections that can be downloaded as PDF
+  const categoryCardsRef = useRef(null);
+  const categoryTableRef = useRef(null);
+  const itemTableRef = useRef(null);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [qtyDraft, setQtyDraft] = useState({ minQty: '', maxQty: '' });
   const [qtyFilter, setQtyFilter] = useState({ minQty: '', maxQty: '' });
@@ -388,6 +420,26 @@ const Consolidation = () => {
   const topItems = itemBreakdown.slice(0, 10).map((row) => ({ ...row, name: row.name }));
   const stockHealth = data?.stockHealth || {};
   const selectedSalesman = salesmen.find((s) => s._id === categorySalesman);
+
+  // What the filters are set to, printed under the title of every PDF
+  const pdfDetails = (() => {
+    const lines = [];
+    const range = filters.preset === 'custom'
+      ? { start: filters.startDate, end: filters.endDate }
+      : rangeForPreset(filters.preset);
+    const fy = FY_PRESET.exec(filters.preset);
+    const periodName = PRESETS.find((pr) => pr.value === filters.preset)?.label
+      || (fy ? (fy[2] ? `${QUARTERS[fy[2] - 1].label} ${fyLabel(Number(fy[1]))}` : fyLabel(Number(fy[1]))) : '');
+    lines.push(`Period: ${periodName}${range?.start ? ` (${range.start} to ${range.end || 'today'})` : ''}`);
+    if (filters.type) lines.push(`Type: ${filters.type}`);
+    if (filters.status) lines.push(`Status: ${STATUS_META[filters.status]?.label || filters.status}`);
+    if (filters.item) lines.push(`Item: ${items.find((it) => it._id === filters.item)?.name || filters.item}`);
+    if (qtyFilter.minQty !== '' || qtyFilter.maxQty !== '') {
+      lines.push(`Order quantity: ${qtyFilter.minQty || 'any'} to ${qtyFilter.maxQty || 'any'}`);
+    }
+    if (checkFilter) lines.push(`Check level: ${checkFilter} only`);
+    return lines;
+  })();
   const topParties = (data?.topParties || []).map((p) => ({
     ...p,
     name: p.partyType === 'Vendor' ? `${p.name} (V)` : p.name
@@ -436,6 +488,14 @@ const Consolidation = () => {
             >
               {PRESETS.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              {fyChoices().map((fy) => (
+                <optgroup key={fy.fy} label={fy.label}>
+                  <option value={`fy${fy.fy}`}>{fy.label} — full year</option>
+                  {fy.quarters.map((qt) => (
+                    <option key={qt.q} value={`fy${fy.fy}q${qt.q}`}>{qt.label} {fy.label} ({qt.span})</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
 
@@ -516,7 +576,25 @@ const Consolidation = () => {
 
       {/* Project structure — unfiltered entity counts */}
       <div>
-        <h2 className="mb-2.5 text-sm font-semibold text-slate-700">Project Structure</h2>
+        <div className="mb-2.5 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-slate-700">Project Structure</h2>
+          <PdfButton
+            label="Summary PDF"
+            title="Download the project structure and filtered summary as PDF"
+            onExport={() =>
+              downloadReportPdf({
+                title: 'Consolidation — Summary',
+                subtitle: 'Project structure (all records) and the summary of the filtered orders',
+                details: pdfDetails,
+                orientation: 'portrait',
+                tables: [
+                  { title: 'Project structure', head: [['', 'Count']], body: structureCards.map((c) => [c.label, formatNumber(c.value)]) },
+                  { title: 'Filtered summary', head: [['', 'Value']], body: summaryCards.map((c) => [c.label, String(c.value ?? '')]) }
+                ]
+              })
+            }
+          />
+        </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {structureCards.map((card) => {
             const Icon = card.icon;
@@ -572,6 +650,7 @@ const Consolidation = () => {
 
         {/* Orders over time */}
         <ChartCard
+          details={pdfDetails}
           title="Orders Over Time"
           subtitle={granularity === 'day' ? 'Daily order count' : 'Monthly order count'}
         >
@@ -601,7 +680,7 @@ const Consolidation = () => {
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* Status distribution */}
-          <ChartCard title="Orders by Status" subtitle="Order count per workflow status">
+          <ChartCard details={pdfDetails} title="Orders by Status" subtitle="Order count per workflow status">
             {statusData.length === 0 ? (
               <EmptyChart />
             ) : (
@@ -623,7 +702,7 @@ const Consolidation = () => {
           </ChartCard>
 
           {/* Top parties */}
-          <ChartCard title="Top Customers & Vendors" subtitle="By number of orders — (V) marks vendors">
+          <ChartCard details={pdfDetails} title="Top Customers & Vendors" subtitle="By number of orders — (V) marks vendors">
             {topParties.length === 0 ? (
               <EmptyChart />
             ) : (
@@ -651,7 +730,7 @@ const Consolidation = () => {
         </div>
 
         {/* Top items by quantity */}
-        <ChartCard title="Top Items by Quantity" subtitle="Total quantity ordered per item (top 10)">
+        <ChartCard details={pdfDetails} title="Top Items by Quantity" subtitle="Total quantity ordered per item (top 10)">
           {topItems.length === 0 ? (
             <EmptyChart />
           ) : (
@@ -744,14 +823,28 @@ const Consolidation = () => {
         {/* Category summary — detailed quantities rolled up per item category */}
         <div className="space-y-4">
           <div>
-            <h2 className="text-sm font-semibold text-slate-700">Detailed Item Summary by Category</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Every item category with its catalog size, stock on hand and ordered quantities
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700">Detailed Item Summary by Category</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Every item category with its catalog size, stock on hand and ordered quantities
+                </p>
+              </div>
+              <PdfButton
+                onExport={() =>
+                  downloadReportPdf({
+                    title: 'Consolidation — Item Summary by Category',
+                    subtitle: 'Every item category with its catalog size, stock on hand and ordered quantities',
+                    details: pdfDetails,
+                    element: categoryCardsRef.current
+                  })
+                }
+              />
+            </div>
           </div>
 
           {/* Category cards */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div ref={categoryCardsRef} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {categoryRows.length === 0 ? (
               <p className="col-span-full py-6 text-center text-sm text-slate-400">
                 No item categories found
@@ -792,7 +885,7 @@ const Consolidation = () => {
             )}
           </div>
 
-          <ChartCard title="Quantity by Category" subtitle="Total quantity ordered per item category">
+          <ChartCard details={pdfDetails} title="Quantity by Category" subtitle="Total quantity ordered per item category">
             {categoryChart.length === 0 ? (
               <EmptyChart />
             ) : (
@@ -819,10 +912,22 @@ const Consolidation = () => {
           </ChartCard>
 
           {/* Table view of the same numbers */}
-          <div className={`srf-card overflow-hidden transition-opacity ${salesmanLoading ? 'opacity-60' : ''}`}>
+          <div ref={categoryTableRef} className={`srf-card overflow-hidden transition-opacity ${salesmanLoading ? 'opacity-60' : ''}`}>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
               <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-slate-800">Category Consolidation</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-slate-800">Category Consolidation</h3>
+                  <PdfButton
+                    onExport={() =>
+                      downloadReportPdf({
+                        title: 'Consolidation — Category Consolidation',
+                        subtitle: 'Catalog columns cover every item; order columns follow the filters',
+                        details: [...pdfDetails, ...(selectedSalesman ? [`Orders booked by: ${selectedSalesman.name}`] : [])],
+                        tables: tablesIn(categoryTableRef.current)
+                      })
+                    }
+                  />
+                </div>
                 <p className="mt-0.5 text-xs text-slate-500">
                   Catalog columns cover every item; order columns follow the filters above.
                   An order spanning two categories is counted in both, so the order total is
@@ -967,9 +1072,21 @@ const Consolidation = () => {
         </div>
 
         {/* Item consolidation table — the readable twin of the charts above */}
-        <div className="srf-card overflow-hidden">
+        <div ref={itemTableRef} className="srf-card overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3 sm:px-5">
-            <h3 className="text-sm font-semibold text-slate-800">Item Consolidation</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-slate-800">Item Consolidation</h3>
+              <PdfButton
+                onExport={() =>
+                  downloadReportPdf({
+                    title: 'Consolidation — Item Consolidation',
+                    subtitle: 'Every item in the filtered orders, with order count, total quantity and estimated value',
+                    details: pdfDetails,
+                    tables: tablesIn(itemTableRef.current)
+                  })
+                }
+              />
+            </div>
             <p className="mt-0.5 text-xs text-slate-500">
               Every item in the filtered orders, with order count, total quantity and estimated value
             </p>

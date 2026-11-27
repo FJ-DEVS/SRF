@@ -25,6 +25,8 @@ const isId = (v) => typeof v === 'string' && mongoose.Types.ObjectId.isValid(v);
 // GET /orders/stats/sales-breakdown — admin, investor
 //   by=category|salesman|customer   what each row (chart line) is
 //   months=3|6|12|24                how far back, this month included
+//   from=YYYY-MM&to=YYYY-MM         or an exact span, both months included —
+//                                   a financial-year quarter, say
 //   category=Name                   only that category ('' = no category)
 //   salesman=<id>|unassigned        only that salesman's assigned customers
 //   customer=<id>                   only that customer
@@ -35,7 +37,7 @@ const isId = (v) => typeof v === 'string' && mongoose.Types.ObjectId.isValid(v);
 exports.getSalesBreakdown = async (req, res) => {
   try {
     const by = BY.includes(req.query.by) ? req.query.by : 'category';
-    const { months, start, end } = monthWindow(req.query.months);
+    const { months, start, end } = monthWindow(req.query.months, req.query.from, req.query.to);
     const hasCategory = typeof req.query.category === 'string';
     const category = hasCategory ? req.query.category.trim() : null;
     const salesmanParam = typeof req.query.salesman === 'string' ? req.query.salesman : '';
@@ -49,7 +51,7 @@ exports.getSalesBreakdown = async (req, res) => {
     }
 
     const [categories, salesmen] = await Promise.all([
-      Category.find().select('name').sort({ createdAt: 1, _id: 1 }).lean(),
+      Category.find().select('name growthTarget').sort({ createdAt: 1, _id: 1 }).lean(),
       Salesman.find().select('name').sort({ name: 1 }).collation({ locale: 'en', strength: 2 }).lean()
     ]);
     const salesmanById = new Map(salesmen.map((s) => [String(s._id), s]));
@@ -102,9 +104,10 @@ exports.getSalesBreakdown = async (req, res) => {
     let rows;
     if (by === 'category') {
       const narrowed = Boolean(customer || salesman);
-      const map = new Map(categories.map((c) => [c.name, blank({ id: c.name, name: c.name, known: true })]));
+      // growth: the category's monthly sales growth target in percent, or null
+      const map = new Map(categories.map((c) => [c.name, blank({ id: c.name, name: c.name, known: true, growth: c.growthTarget ?? null })]));
       for (const line of lines) {
-        if (!map.has(line.category)) map.set(line.category, blank({ id: line.category, name: line.category, known: false }));
+        if (!map.has(line.category)) map.set(line.category, blank({ id: line.category, name: line.category, known: false, growth: null }));
         add(map.get(line.category), line);
       }
       rows = [...map.values()].filter((r) => (!narrowed && r.known) || active(r));
@@ -159,6 +162,136 @@ exports.getSalesBreakdown = async (req, res) => {
     });
   } catch (error) {
     console.error('Get sales breakdown error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+const PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 50;
+// A whole list at once, for a PDF of every customer
+const MAX_EXPORT = 5000;
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// GET /orders/stats/customer-categories — admin, investor
+// GET /orders/salesman/customer-categories — a salesman, in the mobile app:
+//   always their own assigned customers, whatever `salesman` says
+// What each customer buys, category by category — one graph per customer.
+//   months=… | from=…&to=…    the period, as for sales-breakdown
+//   page=1&limit=10           a page of customers, busiest first
+//   search=text               customers whose name or phone matches — these
+//                             come back even with nothing bought, so a search
+//                             always finds the customer
+//   salesman=<id>|unassigned  only that salesman's assigned customers
+//   all=1                     every matching customer (no monthly figures)
+// customers: [{ id, name, salesman, total, returned,
+//               categories: [{ name, total, returned, monthly }] }]
+exports.getCustomerCategories = async (req, res) => {
+  try {
+    const { months, start, end } = monthWindow(req.query.months, req.query.from, req.query.to);
+    const all = req.query.all === '1' || req.query.all === 'true';
+    const limit = all ? MAX_EXPORT : Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(req.query.limit, 10) || PAGE_SIZE));
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 80) : '';
+    const ownCustomers = req.user?.role === 'salesman';
+    const salesmanParam = ownCustomers
+      ? String(req.user.id)
+      : typeof req.query.salesman === 'string' ? req.query.salesman : '';
+
+    if (salesmanParam && salesmanParam !== UNASSIGNED && !isId(salesmanParam)) {
+      return res.status(400).json({ success: false, message: 'Invalid salesman' });
+    }
+
+    const salesmen = await Salesman.find().select('name').lean();
+    const salesmanById = new Map(salesmen.map((s) => [String(s._id), s]));
+    let salesman = null;
+    if (salesmanParam === UNASSIGNED) {
+      salesman = { id: UNASSIGNED, name: 'No assigned salesman' };
+    } else if (salesmanParam) {
+      const found = salesmanById.get(salesmanParam);
+      if (!found) return res.status(404).json({ success: false, message: 'Salesman not found' });
+      salesman = { id: salesmanParam, name: found.name };
+    }
+    const assignedTo = (customer) => {
+      const id = customer?.assignedSalesman ? String(customer.assignedSalesman) : null;
+      return id && salesmanById.has(id) ? id : UNASSIGNED;
+    };
+
+    // The customers in question, where something narrows them
+    const where = {};
+    if (salesman && salesman.id !== UNASSIGNED) where.assignedSalesman = salesman.id;
+    if (search) {
+      const pattern = new RegExp(escapeRegex(search), 'i');
+      where.$or = [{ name: pattern }, { phone: pattern }];
+    }
+    const narrowed = Object.keys(where).length > 0;
+    let matching = null;
+    if (narrowed) {
+      matching = (await Customer.find(where).select('name assignedSalesman').lean())
+        .filter((c) => !salesman || salesman.id !== UNASSIGNED || assignedTo(c) === UNASSIGNED);
+    }
+
+    let lines = [];
+    if (!matching || matching.length) {
+      lines = await soldLines({
+        start,
+        end,
+        customerIds: matching ? matching.map((c) => c._id) : null,
+        customerFields: 'name assignedSalesman'
+      });
+    }
+
+    const { blank, add } = seriesFrom(months);
+    const byCustomer = new Map();
+    const entry = (customer) => {
+      const id = String(customer._id);
+      if (!byCustomer.has(id)) {
+        const sid = assignedTo(customer);
+        byCustomer.set(id, {
+          ...blank({ id, name: customer.name, salesman: sid === UNASSIGNED ? null : salesmanById.get(sid).name }),
+          cats: new Map()
+        });
+      }
+      return byCustomer.get(id);
+    };
+    // A search shows a matching customer even with nothing bought
+    if (search) for (const c of matching) entry(c);
+    for (const line of lines) {
+      // Orders of deleted customers have no one to show them under
+      if (!line.customer?._id) continue;
+      if (salesman?.id === UNASSIGNED && assignedTo(line.customer) !== UNASSIGNED) continue;
+      const row = entry(line.customer);
+      add(row, line);
+      if (!row.cats.has(line.category)) row.cats.set(line.category, blank({ name: line.category }));
+      add(row.cats.get(line.category), line);
+    }
+
+    const rows = [...byCustomer.values()]
+      .filter((r) => search || active(r))
+      .sort(byTotal);
+    const pages = Math.max(1, Math.ceil(rows.length / limit));
+    const page = all ? 1 : Math.min(pages, Math.max(1, parseInt(req.query.page, 10) || 1));
+    const customers = rows.slice((page - 1) * limit, page * limit).map(({ cats, monthly, ...row }) => ({
+      ...row,
+      ...(all ? {} : { monthly }),
+      categories: [...cats.values()]
+        .filter(active)
+        .sort(byTotal)
+        .map((c) => (all ? { name: c.name, total: c.total, returned: c.returned } : c))
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        months: monthsOut(months),
+        page,
+        pages,
+        limit,
+        count: rows.length,
+        customers,
+        filters: { search, salesman }
+      }
+    });
+  } catch (error) {
+    console.error('Get customer categories error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };

@@ -50,6 +50,9 @@ const reorderRoutes = require('./routes/reorder');
 const settingsRoutes = require('./routes/settings');
 const tallyRoutes = require('./routes/tally');
 const viewerRoutes = require('./routes/viewer');
+const closingStockRoutes = require('./routes/closingStock');
+const stockHealthRoutes = require('./routes/stockHealth');
+const { startClosingStockSnapshots } = require('./utils/closingStock');
 const Category = require('./models/Category');
 
 // Use routes
@@ -76,6 +79,8 @@ app.use('/api/reorder', reorderRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/tally', tallyRoutes);
 app.use('/api/viewers', viewerRoutes);
+app.use('/api/closing-stock', closingStockRoutes);
+app.use('/api/stock-health', stockHealthRoutes);
 
 async function seedCategories() {
   const defaults = ['0.8mm', '1mm', '3mm', '0.72mm'];
@@ -204,6 +209,9 @@ mongoose.connection.once('open', () => {
   migratePlacementCapacity().catch(console.error);
   migrateSchemaAllocations().catch(console.error);
   migrateCustomerAppLogins().catch(console.error);
+  // Each category's stock on hand, written against the month every half
+  // hour — what the month closes with stays as its closing stock
+  startClosingStockSnapshots();
 });
 
 const port = process.env.PORT;

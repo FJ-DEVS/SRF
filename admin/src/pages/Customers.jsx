@@ -67,6 +67,8 @@ const Customers = () => {
   const [filterBlocked, setFilterBlocked] = useState('');
   const [sortBy, setSortBy] = useState(DEFAULT_SORT);
   const [filterPayment, setFilterPayment] = useState('');
+  // A salesman's id, 'none' for unassigned customers, or '' for everyone
+  const [filterSalesman, setFilterSalesman] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [pagination, setPagination] = useState({ total: 0, pages: 0 });
@@ -93,7 +95,12 @@ const Customers = () => {
 
   useEffect(() => {
     fetchCustomers();
-  }, [searchTerm, filterBlocked, filterPayment, sortBy, currentPage, pageSize]);
+  }, [searchTerm, filterBlocked, filterPayment, filterSalesman, sortBy, currentPage, pageSize]);
+
+  // The salesman filter needs the list up front; the form refreshes it on open
+  useEffect(() => {
+    fetchSalesmen();
+  }, []);
 
   useEffect(() => {
     if (showModal) fetchSalesmen();
@@ -101,12 +108,11 @@ const Customers = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterBlocked, filterPayment, sortBy, pageSize]);
+  }, [searchTerm, filterBlocked, filterPayment, filterSalesman, sortBy, pageSize]);
 
   const fetchSalesmen = async () => {
     try {
-      const response = await api.get('/salesman', { params: { limit: 200 } });
-      if (response.data.success) setSalesmen(response.data.data);
+      setSalesmen(await fetchAll('/salesman', { sort: 'name_asc' }));
     } catch (error) {
       console.error('Error fetching salesmen:', error);
     }
@@ -118,6 +124,7 @@ const Customers = () => {
       const params = { search: searchTerm, sort: sortBy, page: currentPage, limit: pageSize };
       if (filterBlocked !== '') params.isBlocked = filterBlocked;
       if (filterPayment !== '') params.paymentRating = filterPayment;
+      if (filterSalesman !== '') params.assignedSalesman = filterSalesman;
       const response = await api.get('/customers', { params });
       if (response.data.success) {
         setCustomers(response.data.data);
@@ -407,7 +414,7 @@ const Customers = () => {
       </PageHeader>
 
       {/* Toolbar */}
-      <FilterPanel active={[searchTerm, filterBlocked, filterPayment]}>
+      <FilterPanel active={[searchTerm, filterBlocked, filterPayment, filterSalesman]}>
         <div className="srf-toolbar sm:flex-row sm:items-center">
           <div className="relative w-full sm:max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -431,7 +438,14 @@ const Customers = () => {
               <option value="average">Average payer</option>
               <option value="bad">Poor payer</option>
             </select>
-            <SortSelect value={sortBy} onChange={setSortBy} className="col-span-2 sm:col-span-1" />
+            <select value={filterSalesman} onChange={(e) => setFilterSalesman(e.target.value)}>
+              <option value="">All salesmen</option>
+              <option value="none">No salesman</option>
+              {salesmen.map((s) => (
+                <option key={s._id} value={s._id}>{s.name}</option>
+              ))}
+            </select>
+            <SortSelect value={sortBy} onChange={setSortBy} />
           </div>
         </div>
       </FilterPanel>

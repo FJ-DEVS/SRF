@@ -17,12 +17,34 @@ const BILLED_STATUSES = ['billed', 'delivered'];
 
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
-// The last `count` calendar months, this one included, oldest first
-const monthWindow = (rawCount) => {
-  const count = RANGE_CHOICES.includes(Number(rawCount)) ? Number(rawCount) : DEFAULT_RANGE;
+const MAX_SPAN = 36;
+const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const parseMonth = (value) => {
+  const m = MONTH_RE.exec(typeof value === 'string' ? value : '');
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, 1) : null;
+};
+
+// The months a report covers, oldest first. Either the last `count` calendar
+// months, this one included, or — given `from` and `to` as "YYYY-MM", both
+// included, as for a financial-year quarter — that span, cut off at this
+// month (later months have nothing yet) and at MAX_SPAN months.
+const monthWindow = (rawCount, rawFrom, rawTo) => {
   const now = new Date();
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  let first;
+  let count;
+  const from = parseMonth(rawFrom);
+  const to = parseMonth(rawTo);
+  if (from && to && from <= to) {
+    const last = to > thisMonth ? (from > thisMonth ? from : thisMonth) : to;
+    count = Math.min(MAX_SPAN, (last.getFullYear() - from.getFullYear()) * 12 + last.getMonth() - from.getMonth() + 1);
+    first = from;
+  } else {
+    count = RANGE_CHOICES.includes(Number(rawCount)) ? Number(rawCount) : DEFAULT_RANGE;
+    first = new Date(now.getFullYear(), now.getMonth() - (count - 1), 1);
+  }
   const months = Array.from({ length: count }, (_, i) => {
-    const start = new Date(now.getFullYear(), now.getMonth() - (count - 1 - i), 1);
+    const start = new Date(first.getFullYear(), first.getMonth() + i, 1);
     const label = start.getMonth() === 0 || i === 0
       ? `${MONTH_SHORT[start.getMonth()]} ${start.getFullYear()}`
       : MONTH_SHORT[start.getMonth()];

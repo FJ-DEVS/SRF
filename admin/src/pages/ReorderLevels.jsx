@@ -274,7 +274,8 @@ const ReorderLevels = () => {
   const [searchParams] = useSearchParams();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+  // Non-moving Stock links here with ?search=<item name>
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
   const [categoryFilter, setCategoryFilter] = useState('');
   // The Reorder page links here with ?configured=no for its untracked items
   const [configured, setConfigured] = useState(searchParams.get('configured') || '');

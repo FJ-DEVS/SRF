@@ -31,6 +31,9 @@ import AccountsUsers from './pages/AccountsUsers';
 import CrmUsers from './pages/CrmUsers';
 import Viewers from './pages/Viewers';
 import Investors from './pages/Investors';
+import ClosingStock from './pages/ClosingStock';
+import SalesTargets from './pages/SalesTargets';
+import NonMovingStock from './pages/NonMovingStock';
 import InvestorLogin from './pages/investor/InvestorLogin';
 import InvestorOverview from './pages/investor/InvestorOverview';
 import {
@@ -133,6 +136,9 @@ const adminPages = [
   { path: '/crm-users', element: <CrmUsers /> },
   { path: '/viewers', element: <Viewers /> },
   { path: '/investors', element: <Investors /> },
+  { path: '/closing-stock', element: <ClosingStock /> },
+  { path: '/sales-targets', element: <SalesTargets /> },
+  { path: '/non-moving', element: <NonMovingStock /> },
   { path: '/customers', element: <Customers /> },
   { path: '/vendors', element: <Vendors /> },
   { path: '/items', element: <Items /> },
@@ -179,7 +185,8 @@ const investorPages = [
   { path: '/investor/customers/view', element: <InvestorCustomerView /> },
   { path: '/investor/consolidation', element: <Consolidation /> },
   { path: '/investor/leaderboard', element: <SchemaLeaderboard /> },
-  { path: '/investor/outstandings', element: <Outstandings /> }
+  { path: '/investor/outstandings', element: <Outstandings /> },
+  { path: '/investor/non-moving', element: <NonMovingStock /> }
 ];
 
 function App() {

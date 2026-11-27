@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import PdfButton from './PdfButton';
+import { downloadReportPdf, tablesIn } from '../utils/reportPdf';
 import api from '../utils/api';
 import { CalendarRange, Award, Users } from 'lucide-react';
 
@@ -38,6 +40,7 @@ const SalesmanMonthlySales = () => {
   const [schemaId, setSchemaId] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const cardRef = useRef(null);
 
   useEffect(() => {
     const fetchSales = async () => {
@@ -64,10 +67,22 @@ const SalesmanMonthlySales = () => {
   const total = (pick) => rows.reduce((sum, row) => sum + pick(row), 0);
 
   return (
-    <div className={`srf-card overflow-hidden transition-opacity ${loading && data ? 'opacity-60' : ''}`}>
+    <div ref={cardRef} className={`srf-card overflow-hidden transition-opacity ${loading && data ? 'opacity-60' : ''}`}>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-slate-800">Salesman Sales by Month</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-slate-800">Salesman Sales by Month</h3>
+            <PdfButton
+              onExport={() =>
+                downloadReportPdf({
+                  title: 'Salesman Sales by Month',
+                  subtitle: 'Pieces each salesman sold per category, by the month the order was placed — cancelled orders and completed returns left out',
+                  details: [`Months: ${pairLabel(month)}`, ...(data?.schema ? [`Points: ${data.schema.name}`] : [])],
+                  tables: tablesIn(cardRef.current)
+                })
+              }
+            />
+          </div>
           <p className="mt-0.5 text-xs text-slate-500">
             Pieces each salesman sold per category, by the month the order was placed — cancelled orders and
             completed returns left out. Points are pieces × the category&apos;s rate in the chosen schema, for

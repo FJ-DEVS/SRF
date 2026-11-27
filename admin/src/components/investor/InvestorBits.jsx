@@ -1,16 +1,30 @@
 import React from 'react';
 import { CalendarRange } from 'lucide-react';
 import { RANGE_LABELS } from '../../utils/categorySales';
+import { fyChoices } from '../../utils/financialYear';
 
-// The month-range select every investor report shares
+// The period select every investor report shares: the last few months, or a
+// financial year or one of its quarters (Q1 Apr – Jun … Q4 Jan – Mar)
 export const RangeSelect = ({ months, onChange }) => (
   <label className="flex items-center gap-2">
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-      <CalendarRange className="h-3.5 w-3.5" /> Last
+      <CalendarRange className="h-3.5 w-3.5" /> Period
     </span>
-    <select value={months} onChange={(e) => onChange(Number(e.target.value))} aria-label="Months to show">
-      {Object.entries(RANGE_LABELS).map(([value, label]) => (
-        <option key={value} value={value}>{label}</option>
+    <select value={months} onChange={(e) => onChange(e.target.value)} aria-label="Period to show" className="max-w-[260px]">
+      <optgroup label="Recent">
+        {Object.entries(RANGE_LABELS).map(([value, label]) => (
+          <option key={value} value={`m${value}`}>Last {label}</option>
+        ))}
+      </optgroup>
+      {fyChoices().map((fy) => (
+        <optgroup key={fy.fy} label={fy.label}>
+          <option value={`fy${fy.fy}`}>{fy.label} — full year</option>
+          {fy.quarters.map((qt) => (
+            <option key={qt.q} value={`fy${fy.fy}q${qt.q}`}>
+              {qt.label} {fy.label} ({qt.span})
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   </label>

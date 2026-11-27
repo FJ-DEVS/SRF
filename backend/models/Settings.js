@@ -17,7 +17,10 @@ const orderRestrictionSchema = new mongoose.Schema({
 
 const settingsSchema = new mongoose.Schema({
   key: { type: String, default: 'app', unique: true },
-  orderRestriction: { type: orderRestrictionSchema, default: () => ({}) }
+  orderRestriction: { type: orderRestrictionSchema, default: () => ({}) },
+  // The sale-to-closing-stock ratio each category is steered towards: 3
+  // means 1:3, three months' sales on hand at a month end
+  stockRatioTarget: { type: Number, default: 3, min: 0.1, max: 100 }
 }, {
   timestamps: true
 });

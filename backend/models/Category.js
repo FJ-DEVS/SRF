@@ -15,6 +15,14 @@ const categorySchema = new mongoose.Schema({
     default: null,
     min: [0, 'Check level cannot be negative']
   },
+  // Monthly sales growth aimed for, in percent: 10 means each month's target
+  // is last month's sales plus 10%. Null — no target for this category.
+  growthTarget: {
+    type: Number,
+    default: null,
+    min: [-100, 'Growth cannot be below -100%'],
+    max: [1000, 'Growth cannot be above 1000%']
+  },
   createdAt: {
     type: Date,
     default: Date.now

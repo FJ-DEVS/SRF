@@ -11,6 +11,7 @@ import {
   BarChart3,
   Trophy,
   WalletCards,
+  Hourglass,
   LogOut,
   MoreHorizontal,
   X
@@ -23,7 +24,8 @@ const menuItems = [
   { path: '/investor/customers', icon: UserCircle, label: 'Customers' },
   { path: '/investor/consolidation', icon: BarChart3, label: 'Consolidation' },
   { path: '/investor/leaderboard', icon: Trophy, label: 'Leaderboard' },
-  { path: '/investor/outstandings', icon: WalletCards, label: 'Outstandings' }
+  { path: '/investor/outstandings', icon: WalletCards, label: 'Outstandings' },
+  { path: '/investor/non-moving', icon: Hourglass, label: 'Non-moving Stock' }
 ];
 
 // Phones: the first four get a tab, the rest live in the "More" sheet

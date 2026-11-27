@@ -4,8 +4,12 @@ import api from '../../utils/api';
 import PageHeader from '../../components/PageHeader';
 import ChartFrame from '../../components/ChartFrame';
 import BreakdownReport from '../../components/investor/BreakdownReport';
+import StockRatioReport from '../../components/investor/StockRatioReport';
+import InventoryReport from '../../components/investor/InventoryReport';
 import { RangeSelect, FilterRow } from '../../components/investor/InvestorBits';
 import { useMonths, useSalesBreakdown, num } from '../../components/investor/salesReport';
+import PdfButton from '../../components/PdfButton';
+import { downloadReportPdf } from '../../utils/reportPdf';
 import { STATUS_COLORS } from '../../utils/orderStatus';
 import { AlertTriangle, Package, Layers } from 'lucide-react';
 import {
@@ -72,7 +76,7 @@ const InvestorOverview = () => {
   const alerts = stats?.stockAlerts || {};
 
   const openWith = (path, key) => (row) =>
-    navigate(`${path}?${key}=${encodeURIComponent(row.raw)}&months=${months}`);
+    navigate(`${path}?${key}=${encodeURIComponent(row.raw)}&period=${months}`);
 
   return (
     <div className="srf-page">
@@ -94,7 +98,15 @@ const InvestorOverview = () => {
 
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-2">
-          <ChartFrame title="Order Status" subtitle="Every order, by where it is now">
+          <ChartFrame
+            title="Order Status"
+            subtitle="Every order, by where it is now"
+            pdfTables={() => [{
+              head: [['Status', 'Orders', 'Share']],
+              body: statusData.map((s) => [s.name, num(s.value), statusTotal ? `${Math.round((s.value / statusTotal) * 100)}%` : '-']),
+              foot: [['Total', num(statusTotal), '']]
+            }]}
+          >
             {(expanded) => (
               <div className={`flex items-center gap-6 ${expanded ? 'min-h-0 flex-1 justify-center' : ''}`}>
                 <div className={`relative shrink-0 ${expanded ? 'h-[60vh] w-[60vh] max-w-[60vw]' : 'h-44 w-44'}`}>
@@ -140,6 +152,10 @@ const InvestorOverview = () => {
           <ChartFrame
             title="Order Trends"
             subtitle="Orders placed and delivered — last 6 months"
+            pdfTables={() => [{
+              head: [['Month', 'Orders placed', 'Delivered']],
+              body: (stats?.trends || []).map((t) => [t.month, num(t.orders), num(t.delivered)])
+            }]}
             actions={
               <div className="flex items-center gap-3">
                 <span className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
@@ -192,6 +208,19 @@ const InvestorOverview = () => {
         table={false}
         rangeControl={range}
       />
+      <StockRatioReport
+        sales={byCategory}
+        months={months}
+        storageKey="investor.overview.stockRatio"
+        onOpen={openWith('/investor/categories/view', 'category')}
+        rangeControl={range}
+      />
+      <InventoryReport
+        sales={byCategory}
+        months={months}
+        onOpen={openWith('/investor/categories/view', 'category')}
+        rangeControl={range}
+      />
       <BreakdownReport
         report={bySalesman}
         months={months}
@@ -206,7 +235,8 @@ const InvestorOverview = () => {
 
       {/* Stock at its check level */}
       <div className="srf-card">
-        <div className="px-4 pt-4 sm:px-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-4 sm:px-5">
+          <div>
           <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-slate-900">
             <AlertTriangle className={`h-4 w-4 ${alerts.itemsBelow ? 'text-amber-500' : 'text-slate-300'}`} />
             Check Level Alerts
@@ -215,6 +245,29 @@ const InvestorOverview = () => {
             {num(alerts.itemsBelow)} item{alerts.itemsBelow === 1 ? '' : 's'} and {num(alerts.categoriesBelow)}{' '}
             categor{alerts.categoriesBelow === 1 ? 'y' : 'ies'} at or below their safety stock
           </p>
+          </div>
+          <PdfButton
+            onExport={() =>
+              downloadReportPdf({
+                title: 'Check Level Alerts',
+                subtitle: 'Stock at or below its safety level (check level)',
+                details: [`${num(alerts.itemsBelow)} items and ${num(alerts.categoriesBelow)} categories at or below their check level`],
+                orientation: 'portrait',
+                tables: [
+                  {
+                    title: 'Items',
+                    head: [['Item', 'Category', 'Stock', 'Check level']],
+                    body: (alerts.items || []).map((it) => [it.name, it.category || 'Uncategorised', num(it.quantity), num(it.effectiveCheckLevel)])
+                  },
+                  {
+                    title: 'Categories',
+                    head: [['Category', 'Stock', 'Check level']],
+                    body: (alerts.categories || []).map((c) => [c.category || 'Uncategorised', num(c.stockQty), num(c.checkLevel)])
+                  }
+                ]
+              })
+            }
+          />
         </div>
         {!(alerts.items?.length || alerts.categories?.length) ? (
           <p className="px-5 py-8 text-center text-[13px] text-slate-400">Everything is above its check level.</p>

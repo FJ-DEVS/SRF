@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Customer = require('../models/Customer');
 const Salesman = require('../models/Salesman');
 const jwt = require('jsonwebtoken');
@@ -224,9 +225,19 @@ exports.createCustomer = async (req, res) => {
 // Get all customers
 exports.getAllCustomers = async (req, res) => {
   try {
-    const { search, isBlocked, paymentRating, sort, page = 1, limit = 10 } = req.query;
-    
+    const { search, isBlocked, paymentRating, assignedSalesman, sort, page = 1, limit = 10 } = req.query;
+
     let query = {};
+
+    // One salesman's customers, or "none" for the customers no salesman has
+    if (assignedSalesman === 'none') {
+      query.assignedSalesman = null;
+    } else if (assignedSalesman) {
+      if (!mongoose.Types.ObjectId.isValid(assignedSalesman)) {
+        return res.status(400).json({ success: false, message: 'Invalid salesman' });
+      }
+      query.assignedSalesman = assignedSalesman;
+    }
     
     if (search) {
       query.$or = [

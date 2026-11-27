@@ -39,10 +39,15 @@ router.get('/stats', roleAuth('admin', 'accounts', 'investor'), orderController.
 
 // Billed sales by category, salesman or customer — the investor dashboard's charts
 router.get('/stats/sales-breakdown', reportAuthMiddleware, categorySalesController.getSalesBreakdown);
+router.get('/stats/customer-categories', reportAuthMiddleware, categorySalesController.getCustomerCategories);
 
 // Consolidation report - Admin and investor
 router.get('/consolidation', reportAuthMiddleware, orderController.getConsolidationReport);
 router.get('/consolidation/salesmen', reportAuthMiddleware, orderController.getSalesmanMonthlySales);
+
+// The mobile app's customer graphs: what each of a salesman's assigned
+// customers buys, category by category (before /salesman/:id)
+router.get('/salesman/customer-categories', roleAuth('salesman'), categorySalesController.getCustomerCategories);
 
 // App list/detail (same controller rules as GET / and GET /:id for role
 // salesman; customers see only the orders they placed themselves)

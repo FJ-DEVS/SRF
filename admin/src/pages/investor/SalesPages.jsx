@@ -4,9 +4,12 @@ import api from '../../utils/api';
 import PageHeader from '../../components/PageHeader';
 import ChartFrame from '../../components/ChartFrame';
 import BreakdownReport from '../../components/investor/BreakdownReport';
+import CustomerCategoryCards from '../../components/investor/CustomerCategoryCards';
+import StockRatioReport from '../../components/investor/StockRatioReport';
+import InventoryReport from '../../components/investor/InventoryReport';
 import { RangeSelect, StatTiles, FilterRow } from '../../components/investor/InvestorBits';
-import { useMonths, useSalesBreakdown, num, toSeries, UNASSIGNED_ID } from '../../components/investor/salesReport';
-import { RANGE_LABELS, categoryLabel } from '../../utils/categorySales';
+import { useMonths, useSalesBreakdown, num, toSeries, periodText, UNASSIGNED_ID } from '../../components/investor/salesReport';
+import { categoryLabel } from '../../utils/categorySales';
 import { ArrowLeft, Layers, Users, UserCircle } from 'lucide-react';
 
 // The investor's sales reports. Every figure is billed pieces, by the month
@@ -18,7 +21,7 @@ const BASIS = 'Billed pieces by month, less returns in the month they came back'
 // Opening a category, salesman or customer keeps the month range
 const useOpeners = (months) => {
   const navigate = useNavigate();
-  const go = (path, key, value) => navigate(`${path}?${key}=${encodeURIComponent(value)}&months=${months}`);
+  const go = (path, key, value) => navigate(`${path}?${key}=${encodeURIComponent(value)}&period=${months}`);
   return {
     category: (name) => go('/investor/categories/view', 'category', name),
     salesman: (id) => go('/investor/salesmen/view', 'salesman', id),
@@ -75,6 +78,14 @@ export const InvestorCategories = () => {
         tableTitle="Every category"
         rangeControl={range}
       />
+      <StockRatioReport
+        sales={report}
+        months={months}
+        storageKey="investor.categories.stockRatio"
+        onOpen={(row) => open.category(row.raw)}
+        rangeControl={range}
+      />
+      <InventoryReport sales={report} months={months} onOpen={(row) => open.category(row.raw)} rangeControl={range} />
     </div>
   );
 };
@@ -139,6 +150,8 @@ export const InvestorCategoryView = () => {
         months={months}
         title="Salesman-wise sales"
         subtitle={`${title}, by the salesman each customer is assigned to — whoever placed the order`}
+        pdfTitle={`${title} — salesman-wise sales`}
+        pdfContext={[`Category: ${title}`]}
         noun="salesman"
         onOpen={(row) => open.salesman(row.raw)}
         tableTitle="Sales per salesman"
@@ -149,6 +162,8 @@ export const InvestorCategoryView = () => {
         months={months}
         title="Customer-wise sales"
         subtitle={`Who buys ${title} — the busiest customers are drawn first`}
+        pdfTitle={`${title} — customer-wise sales`}
+        pdfContext={[`Category: ${title}`]}
         noun="customer"
         onOpen={(row) => open.customer(row.raw)}
         tableTitle={`Customers buying ${title}`}
@@ -262,6 +277,8 @@ export const InvestorSalesmanView = () => {
             months={months}
             title="Category-wise sales"
             subtitle={`What ${name}'s customers buy, category by category`}
+            pdfTitle={`${name} — category-wise sales`}
+            pdfContext={[`Salesman: ${name}`]}
             noun="category"
             onOpen={(row) => open.category(row.raw)}
             tableTitle="Sales per category"
@@ -272,6 +289,8 @@ export const InvestorSalesmanView = () => {
             months={months}
             title="Customer-wise sales"
             subtitle={`${name}'s customers — the busiest are drawn first`}
+            pdfTitle={`${name} — customer-wise sales`}
+            pdfContext={[`Salesman: ${name}`]}
             noun="customer"
             onOpen={(row) => open.customer(row.raw)}
             tableTitle="Sales per customer"
@@ -317,16 +336,31 @@ export const InvestorCustomers = () => {
         tableTitle="Every customer with sales"
         rangeControl={range}
       />
+      <CustomerCategoryCards
+        period={months}
+        onPeriodChange={setMonths}
+        onOpenCustomer={open.customer}
+        onOpenCategory={open.category}
+      />
     </div>
   );
 };
 
 // Which categories a customer buys most, as bars
-const TopCategories = ({ data, months }) => {
+const TopCategories = ({ data, months, customer }) => {
   const rows = useMemo(() => toSeries(data).filter((r) => r.total !== 0 || r.returned > 0), [data]);
   const most = Math.max(1, ...rows.map((r) => r.total));
   return (
-    <ChartFrame title="Top categories" subtitle={`Net pieces over the last ${RANGE_LABELS[months]}`}>
+    <ChartFrame
+      title="Top categories"
+      subtitle={`Net pieces over ${periodText(months)}`}
+      pdfTitle={`${customer?.name || 'Customer'} — top categories`}
+      pdfDetails={[`Period: ${periodText(months)}`, `Customer: ${customer?.name || ''}`, `Salesman: ${customer?.salesman || 'not assigned'}`]}
+      pdfTables={() => [{
+        head: [['#', 'Category', 'Net pieces', 'Returned']],
+        body: rows.map((r, i) => [i + 1, r.label, num(r.total), num(r.returned)])
+      }]}
+    >
       {(expanded) =>
         rows.length === 0 ? (
           <p className="py-12 text-center text-[13px] text-slate-400">Nothing billed in this period.</p>
@@ -395,13 +429,15 @@ export const InvestorCustomerView = () => {
                 months={months}
                 title="Category-wise purchases"
                 subtitle="What this customer buys, month by month"
+                pdfTitle={`${info?.name || 'Customer'} — category-wise purchases`}
+                pdfContext={[`Customer: ${info?.name || ''}`, `Salesman: ${info?.salesman || 'not assigned'}`]}
                 noun="category"
                 onOpen={(row) => open.category(row.raw)}
                 table={false}
                 rangeControl={range}
               />
             </div>
-            {byCategory.data && <TopCategories data={byCategory.data} months={months} />}
+            {byCategory.data && <TopCategories data={byCategory.data} months={months} customer={info} />}
           </div>
           <BreakdownReport
             report={byCategory}
@@ -409,7 +445,8 @@ export const InvestorCustomerView = () => {
             title=""
             noun="category"
             onOpen={(row) => open.category(row.raw)}
-            tableTitle="Purchases per category"
+            tableTitle={`${info?.name || 'Customer'} — purchases per category`}
+            pdfContext={[`Customer: ${info?.name || ''}`, `Salesman: ${info?.salesman || 'not assigned'}`]}
             chart={false}
           />
         </>
