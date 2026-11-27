@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import api from '../utils/api';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
-import CategorySalesCard from '../components/CategorySalesCard';
 import { orderTotal, formatMoney, itemsSummary } from '../utils/orderMath';
 import { STATUS_COLORS } from '../utils/orderStatus';
 import {
@@ -221,9 +220,6 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
-
-      {/* Pieces sold per category, month by month */}
-      <CategorySalesCard />
 
       {/* Check level — stock at or below its safety line */}
       <div className="srf-card">

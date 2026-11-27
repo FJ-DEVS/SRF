@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const salesmanController = require('../controllers/salesmanController');
 const authMiddleware = require('../middleware/auth');
+const { roleAuth } = require('../middleware/roleAuth');
 const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 
 // Public route - Salesman login
@@ -13,6 +14,9 @@ router.get('/verify', salesmanAuthMiddleware, salesmanController.verifySalesman)
 // Admin only routes - Salesman management
 router.post('/', authMiddleware, salesmanController.createSalesman);
 router.get('/', authMiddleware, salesmanController.getAllSalesmen);
+// Just ids and names, for report filters — readable by investors, who must
+// never get the full records (they carry the passwords)
+router.get('/names', roleAuth('admin', 'investor'), salesmanController.getSalesmanNames);
 router.get('/:id', authMiddleware, salesmanController.getSalesman);
 router.put('/:id', authMiddleware, salesmanController.updateSalesman);
 router.put('/:id/permissions', authMiddleware, salesmanController.updateSalesmanPermissions);

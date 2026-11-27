@@ -46,13 +46,13 @@ const customerOf = (order) =>
 // A returned line carries a negative qty and returned: true.
 //   itemIds     — only orders holding any of these items are read (the lines
 //                 of other items still come back, so filter by category)
-//   customerId  — only this customer's orders
+//   customerIds — only these customers' orders
 //   customerFields — populate the customer with these fields; otherwise
 //                 `customer` is null
-const soldLines = async ({ start, end, itemIds = null, customerId = null, customerFields = null }) => {
+const soldLines = async ({ start, end, itemIds = null, customerIds = null, customerFields = null }) => {
   const scope = {};
   if (itemIds) scope['items.item'] = { $in: itemIds };
-  if (customerId) scope.customerName = customerId;
+  if (customerIds) scope.customerName = { $in: customerIds };
 
   const sellQuery = Order.find({
     ...scope,

@@ -62,7 +62,8 @@ const SchemaLeaderboard = () => {
 
   const fetchSalesmen = async () => {
     try {
-      const response = await api.get('/salesman', { params: { limit: 200 } });
+      // Names only — investors may not read the salesman records
+      const response = await api.get('/salesman/names');
       if (response.data.success) setSalesmen(response.data.data);
     } catch (error) {
       console.error('Error fetching salesmen:', error);

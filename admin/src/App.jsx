@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import RollerLayout from './components/RollerLayout';
 import AccountsLayout from './components/AccountsLayout';
 import CrmLayout from './components/CrmLayout';
+import InvestorLayout from './components/InvestorLayout';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -18,7 +19,6 @@ import Cargo from './pages/Cargo';
 import Orders from './pages/Orders';
 import FailedOrders from './pages/FailedOrders';
 import Consolidation from './pages/Consolidation';
-import CategorySales from './pages/CategorySales';
 import Schemas from './pages/Schemas';
 import SchemaLeaderboard from './pages/SchemaLeaderboard';
 import Database from './pages/Database';
@@ -30,6 +30,17 @@ import Rollers from './pages/Rollers';
 import AccountsUsers from './pages/AccountsUsers';
 import CrmUsers from './pages/CrmUsers';
 import Viewers from './pages/Viewers';
+import Investors from './pages/Investors';
+import InvestorLogin from './pages/investor/InvestorLogin';
+import InvestorOverview from './pages/investor/InvestorOverview';
+import {
+  InvestorCategories,
+  InvestorCategoryView,
+  InvestorSalesmen,
+  InvestorSalesmanView,
+  InvestorCustomers,
+  InvestorCustomerView
+} from './pages/investor/SalesPages';
 import RollerLogin from './pages/roller/RollerLogin';
 import RollerOrders from './pages/roller/RollerOrders';
 import RollerPlacements from './pages/roller/RollerPlacements';
@@ -51,7 +62,8 @@ const Spinner = () => (
 const HOME_PATHS = {
   roller: '/roller/orders',
   accounts: '/accounts/dashboard',
-  crm: '/crm/customers'
+  crm: '/crm/customers',
+  investor: '/investor/dashboard'
 };
 const homeFor = (user) => HOME_PATHS[user?.role] || '/dashboard';
 
@@ -95,6 +107,16 @@ const CrmRoute = ({ children }) => {
   return children;
 };
 
+const InvestorRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/investor/login" />;
+  if (user.role !== 'investor') return <Navigate to={homeFor(user)} />;
+
+  return children;
+};
+
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
 
@@ -110,6 +132,7 @@ const adminPages = [
   { path: '/accounts-users', element: <AccountsUsers /> },
   { path: '/crm-users', element: <CrmUsers /> },
   { path: '/viewers', element: <Viewers /> },
+  { path: '/investors', element: <Investors /> },
   { path: '/customers', element: <Customers /> },
   { path: '/vendors', element: <Vendors /> },
   { path: '/items', element: <Items /> },
@@ -120,7 +143,6 @@ const adminPages = [
   { path: '/orders', element: <Orders /> },
   { path: '/failed-orders', element: <FailedOrders /> },
   { path: '/consolidation', element: <Consolidation /> },
-  { path: '/category-sales', element: <CategorySales /> },
   { path: '/schemas', element: <Schemas /> },
   { path: '/schema-leaderboard', element: <SchemaLeaderboard /> },
   { path: '/outstandings', element: <Outstandings /> },
@@ -143,6 +165,21 @@ const accountsPages = [
 const crmPages = [
   { path: '/crm/customers', element: <CrmCustomers /> },
   { path: '/crm/orders', element: <CrmOrders /> }
+];
+
+// Read-only reports. Consolidation, leaderboard and outstandings are the
+// admin's own pages, which hide their admin-only controls for an investor.
+const investorPages = [
+  { path: '/investor/dashboard', element: <InvestorOverview /> },
+  { path: '/investor/categories', element: <InvestorCategories /> },
+  { path: '/investor/categories/view', element: <InvestorCategoryView /> },
+  { path: '/investor/salesmen', element: <InvestorSalesmen /> },
+  { path: '/investor/salesmen/view', element: <InvestorSalesmanView /> },
+  { path: '/investor/customers', element: <InvestorCustomers /> },
+  { path: '/investor/customers/view', element: <InvestorCustomerView /> },
+  { path: '/investor/consolidation', element: <Consolidation /> },
+  { path: '/investor/leaderboard', element: <SchemaLeaderboard /> },
+  { path: '/investor/outstandings', element: <Outstandings /> }
 ];
 
 function App() {
@@ -195,6 +232,15 @@ function App() {
             }
           />
 
+          <Route
+            path="/investor/login"
+            element={
+              <PublicRoute>
+                <InvestorLogin />
+              </PublicRoute>
+            }
+          />
+
           {adminPages.map((page) => (
             <Route
               key={page.path}
@@ -243,9 +289,22 @@ function App() {
             />
           ))}
 
+          {investorPages.map((page) => (
+            <Route
+              key={page.path}
+              path={page.path}
+              element={
+                <InvestorRoute>
+                  <InvestorLayout>{page.element}</InvestorLayout>
+                </InvestorRoute>
+              }
+            />
+          ))}
+
           <Route path="/roller" element={<Navigate to="/roller/orders" />} />
           <Route path="/accounts" element={<Navigate to="/accounts/dashboard" />} />
           <Route path="/crm" element={<Navigate to="/crm/customers" />} />
+          <Route path="/investor" element={<Navigate to="/investor/dashboard" />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Router>

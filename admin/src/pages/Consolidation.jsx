@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { fetchAll } from '../utils/api';
 import PageHeader from '../components/PageHeader';
+import ChartFrame from '../components/ChartFrame';
+import { useAuth } from '../context/AuthContext';
 import FilterPanel from '../components/FilterPanel';
 import SalesmanMonthlySales from '../components/SalesmanMonthlySales';
 import {
@@ -163,14 +165,19 @@ const BarRowTooltip = ({ active, payload }) => {
 const barCursor = { fill: 'rgba(148, 163, 184, 0.08)' };
 const axisTick = { fontSize: 12, fill: '#64748b' };
 
+// Maximised, the chart's fixed height gives way to the whole screen — the
+// chart's own height prop has to change, recharts doesn't measure a fixed one
+const fillHeight = (children) =>
+  React.Children.map(children, (child) =>
+    React.isValidElement(child) && child.type === ResponsiveContainer
+      ? React.cloneElement(child, { height: '100%' })
+      : child
+  );
+
 const ChartCard = ({ title, subtitle, children }) => (
-  <div className="srf-card p-4 sm:p-5">
-    <div className="mb-3">
-      <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-      {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-    </div>
-    {children}
-  </div>
+  <ChartFrame title={title} subtitle={subtitle}>
+    {(expanded) => (expanded ? <div className="min-h-0 flex-1">{fillHeight(children)}</div> : children)}
+  </ChartFrame>
 );
 
 const EmptyChart = () => (
@@ -179,7 +186,11 @@ const EmptyChart = () => (
   </div>
 );
 
+// Also the investor's consolidation report: the same figures, read only, with
+// the project-structure tiles no longer leading into admin screens
 const Consolidation = () => {
+  const { user } = useAuth();
+  const isInvestor = user?.role === 'investor';
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [qtyDraft, setQtyDraft] = useState({ minQty: '', maxQty: '' });
   const [qtyFilter, setQtyFilter] = useState({ minQty: '', maxQty: '' });
@@ -202,7 +213,8 @@ const Consolidation = () => {
       try {
         const [itemsRes, salesmenRes] = await Promise.all([
           fetchAll('/items'),
-          api.get('/salesman', { params: { limit: 500 } })
+          // Names only — investors may not read the salesman records
+          api.get('/salesman/names')
         ]);
         setItems([...itemsRes].sort((a, b) => a.name.localeCompare(b.name)));
         if (salesmenRes.data.success) {
@@ -509,7 +521,12 @@ const Consolidation = () => {
           {structureCards.map((card) => {
             const Icon = card.icon;
             return (
-              <Link key={card.label} to={card.link} className="srf-card srf-card-hover p-3.5">
+              <Link
+                key={card.label}
+                to={isInvestor ? '#' : card.link}
+                onClick={isInvestor ? (e) => e.preventDefault() : undefined}
+                className={`srf-card p-3.5 ${isInvestor ? 'cursor-default' : 'srf-card-hover'}`}
+              >
                 <div className="flex items-center gap-2.5">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100">
                     <Icon className="h-4 w-4 text-slate-600" />

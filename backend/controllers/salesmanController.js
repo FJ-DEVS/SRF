@@ -329,3 +329,18 @@ exports.deleteSalesman = async (req, res) => {
   }
 };
 
+
+// Ids and names only, A–Z — for report filters (Admin, investor)
+exports.getSalesmanNames = async (req, res) => {
+  try {
+    const salesmen = await Salesman.find()
+      .select('name')
+      .sort({ name: 1 })
+      .collation({ locale: 'en', strength: 2 })
+      .lean();
+    res.status(200).json({ success: true, data: salesmen });
+  } catch (error) {
+    console.error('Get salesman names error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};

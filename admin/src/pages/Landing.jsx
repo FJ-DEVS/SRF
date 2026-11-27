@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck, Disc3, Calculator, Headset, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Disc3, Calculator, Headset, LineChart, ArrowRight } from 'lucide-react';
 import logo1 from '../assets/logo1.png';
 
 const ROLES = [
@@ -35,6 +35,14 @@ const ROLES = [
     text: 'Manage customers, block or unblock them, and confirm deliveries.',
     accent: 'group-hover:border-sky-300 group-hover:bg-sky-50/60',
     iconWrap: 'bg-sky-50 text-sky-600 ring-sky-100'
+  },
+  {
+    path: '/investor/login',
+    icon: LineChart,
+    title: 'Investor',
+    text: 'Sales reports and charts by category, salesman and customer.',
+    accent: 'group-hover:border-violet-300 group-hover:bg-violet-50/60',
+    iconWrap: 'bg-violet-50 text-violet-600 ring-violet-100'
   }
 ];
 

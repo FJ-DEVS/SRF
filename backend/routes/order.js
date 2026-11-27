@@ -31,17 +31,18 @@ const cancelApproveAuthMiddleware = roleAuth('admin', 'accounts');
 const rollerAuthMiddleware = roleAuth('roller');
 const crmAuthMiddleware = roleAuth('crm');
 
-// Dashboard stats - Admin and accounts manager
-router.get('/stats', roleAuth('admin', 'accounts'), orderController.getDashboardStats);
+// Reports investors may read too — they see these and change nothing
+const reportAuthMiddleware = roleAuth('admin', 'investor');
 
-// Dashboard category sales chart and its per-category salesman breakdown - Admin only
-router.get('/stats/category-sales', authMiddleware, categorySalesController.getCategorySales);
-router.get('/stats/category-sales/salesmen', authMiddleware, categorySalesController.getCategorySalesBySalesman);
-router.get('/stats/category-sales/customer/:id', authMiddleware, categorySalesController.getCustomerCategorySales);
+// Dashboard stats - Admin, accounts manager and investor
+router.get('/stats', roleAuth('admin', 'accounts', 'investor'), orderController.getDashboardStats);
 
-// Consolidation report - Admin only
-router.get('/consolidation', authMiddleware, orderController.getConsolidationReport);
-router.get('/consolidation/salesmen', authMiddleware, orderController.getSalesmanMonthlySales);
+// Billed sales by category, salesman or customer — the investor dashboard's charts
+router.get('/stats/sales-breakdown', reportAuthMiddleware, categorySalesController.getSalesBreakdown);
+
+// Consolidation report - Admin and investor
+router.get('/consolidation', reportAuthMiddleware, orderController.getConsolidationReport);
+router.get('/consolidation/salesmen', reportAuthMiddleware, orderController.getSalesmanMonthlySales);
 
 // App list/detail (same controller rules as GET / and GET /:id for role
 // salesman; customers see only the orders they placed themselves)

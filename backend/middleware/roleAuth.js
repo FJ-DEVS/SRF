@@ -6,6 +6,7 @@ const AccountsManager = require('../models/AccountsManager');
 const CrmManager = require('../models/CrmManager');
 const Customer = require('../models/Customer');
 const Viewer = require('../models/Viewer');
+const Investor = require('../models/Investor');
 
 // Roles whose accounts live in the database. Their token is only honoured while
 // the account is still there, so deleting a staff member from the admin panel
@@ -16,7 +17,8 @@ const ACCOUNT_MODELS = {
   accounts: AccountsManager,
   crm: CrmManager,
   customer: Customer,
-  viewer: Viewer
+  viewer: Viewer,
+  investor: Investor
 };
 
 // A customer record outlives its app logins — the admin can take one away and

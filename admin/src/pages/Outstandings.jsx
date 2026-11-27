@@ -9,6 +9,7 @@ import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
 import FilterPanel from '../components/FilterPanel';
 import ImportTallyXmlModal from '../components/ImportTallyXmlModal';
+import { useAuth } from '../context/AuthContext';
 import {
   Search, Download, IndianRupee, AlertTriangle, Users, ReceiptText, Link2Off, X, ArrowRight,
   RefreshCw, SlidersHorizontal, WalletCards, FileUp
@@ -107,7 +108,10 @@ const Field = ({ label, children }) => (
 
 // Customer outstandings as pushed by Tally: party-wise with ageing, or
 // bill-wise like Tally's Bills Receivable, with the filters Tally offers
+// Investors read this page too, without the Tally import and sync controls
 const Outstandings = () => {
+  const { user } = useAuth();
+  const isInvestor = user?.role === 'investor';
   const [view, setView] = useState('parties');
   const [rows, setRows] = useState([]);
   const [totals, setTotals] = useState(null);
@@ -302,15 +306,19 @@ const Outstandings = () => {
           ? `${company.name} · Tally figures as of ${day(company.asOfDate)} · last synced ${dateTime(company.lastSyncedAt)}`
           : 'Customer pending bills, as pushed by Tally'}
       >
-        <Link to="/tally-sync" className="srf-btn srf-btn-secondary">
-          <RefreshCw className="h-4 w-4 text-slate-400" />
-          Tally sync
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-        <button onClick={() => setImportOpen(true)} disabled={!status} className="srf-btn srf-btn-secondary">
-          <FileUp className="h-4 w-4 text-slate-400" />
-          Import XML
-        </button>
+        {!isInvestor && (
+          <>
+            <Link to="/tally-sync" className="srf-btn srf-btn-secondary">
+              <RefreshCw className="h-4 w-4 text-slate-400" />
+              Tally sync
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+            <button onClick={() => setImportOpen(true)} disabled={!status} className="srf-btn srf-btn-secondary">
+              <FileUp className="h-4 w-4 text-slate-400" />
+              Import XML
+            </button>
+          </>
+        )}
         <button onClick={handleExport} disabled={loading || exporting || rows.length === 0} className="srf-btn srf-btn-secondary">
           <Download className="h-4 w-4 text-slate-400" />
           {exporting ? 'Exporting…' : 'Export Excel'}
@@ -323,6 +331,8 @@ const Outstandings = () => {
             <WalletCards className="h-5 w-5" />
           </span>
           <p className="mt-3 text-sm font-semibold text-slate-700">No outstandings received from Tally yet</p>
+          {!isInvestor && (
+          <>
           <p className="mt-1 max-w-sm text-xs text-slate-400">
             Import a Bills Receivable XML exported from Tally, or generate an API key so Tally pushes them automatically.
           </p>
@@ -333,10 +343,12 @@ const Outstandings = () => {
             </button>
             <Link to="/tally-sync" className="srf-btn srf-btn-secondary">Set up Tally sync</Link>
           </div>
+          </>
+          )}
         </div>
       ) : (
         <>
-          {status?.unmappedLedgers > 0 && (
+          {!isInvestor && status?.unmappedLedgers > 0 && (
             <Link
               to="/tally-sync"
               className="flex items-center gap-2.5 rounded-xl bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800 ring-1 ring-inset ring-amber-200 transition-colors hover:bg-amber-100/70"

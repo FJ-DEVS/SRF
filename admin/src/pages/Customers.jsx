@@ -3,7 +3,6 @@ import api, { fetchAll } from '../utils/api';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
 import DetailModal from '../components/DetailModal';
-import CustomerCategorySales from '../components/CustomerCategorySales';
 import Pagination from '../components/Pagination';
 import PageHeader from '../components/PageHeader';
 import SortSelect from '../components/SortSelect';
@@ -811,10 +810,7 @@ const Customers = () => {
         title="Customer Details"
         fields={getDetailFields(detailCustomer)}
         onEdit={() => detailCustomer && handleEdit(detailCustomer)}
-        wide
-      >
-        {detailCustomer && <CustomerCategorySales key={detailCustomer._id} customerId={detailCustomer._id} />}
-      </DetailModal>
+      />
 
       {/* Permission manager */}
       {permTarget && (

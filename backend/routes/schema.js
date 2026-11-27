@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const schemaController = require('../controllers/schemaController');
 const authMiddleware = require('../middleware/auth');
+const { roleAuth } = require('../middleware/roleAuth');
 const salesmanAuthMiddleware = require('../middleware/salesmanAuth');
 
 // Salesman self view (registered before '/:id' so it isn't captured as an id)
@@ -14,9 +15,9 @@ router.get('/salesman/:id/leaderboard', salesmanAuthMiddleware, schemaController
 
 // Admin only
 router.post('/', authMiddleware, schemaController.createSchema);
-router.get('/', authMiddleware, schemaController.getAllSchemas);
+router.get('/', roleAuth('admin', 'investor'), schemaController.getAllSchemas);
 router.get('/:id', authMiddleware, schemaController.getSchema);
-router.get('/:id/leaderboard', authMiddleware, schemaController.getSchemaLeaderboard);
+router.get('/:id/leaderboard', roleAuth('admin', 'investor'), schemaController.getSchemaLeaderboard);
 router.put('/:id', authMiddleware, schemaController.updateSchema);
 router.delete('/:id', authMiddleware, schemaController.deleteSchema);
 

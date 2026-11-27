@@ -22,7 +22,8 @@ const readAuthMiddleware = roleAuth('admin', 'accounts');
 
 // Admin routes
 router.post('/', authMiddleware, itemController.createItem);
-router.get('/', readAuthMiddleware, itemController.getAllItems);
+// Investors read the item list for report filters
+router.get('/', roleAuth('admin', 'accounts', 'investor'), itemController.getAllItems);
 router.put('/bulk-price-update', authMiddleware, itemController.bulkUpdatePriceByCategory);
 router.post('/bulk-import', authMiddleware, itemController.bulkImportItems);
 router.get('/:id/stats', readAuthMiddleware, itemController.getItemStats);

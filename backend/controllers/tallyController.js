@@ -489,7 +489,8 @@ exports.getStatus = async (req, res) => {
         lastSync,
         unmappedLedgers,
         voucherTypes,
-        apiKey: {
+        // The Tally API key's details are the admin's alone
+        apiKey: req.user?.role !== 'admin' ? null : {
           exists: Boolean(config?.apiKeyHash),
           hint: config?.apiKeyHint || '',
           createdAt: config?.apiKeyCreatedAt || null,

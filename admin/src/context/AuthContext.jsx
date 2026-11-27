@@ -20,7 +20,8 @@ const SESSION_POLL_MS = 60_000;
 const VERIFY_PATHS = {
   roller: '/rollers/verify',
   accounts: '/accounts/verify',
-  crm: '/crm/verify'
+  crm: '/crm/verify',
+  investor: '/investors/verify'
 };
 
 export const AuthProvider = ({ children }) => {
@@ -70,6 +71,7 @@ export const AuthProvider = ({ children }) => {
   const loginRoller = (username, password) => signIn('/rollers/login', username, password);
   const loginAccounts = (username, password) => signIn('/accounts/login', username, password);
   const loginCrm = (username, password) => signIn('/crm/login', username, password);
+  const loginInvestor = (username, password) => signIn('/investors/login', username, password);
 
   const logout = () => {
     setRevokedNotice('');
@@ -124,7 +126,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, login, loginRoller, loginAccounts, loginCrm, logout, loading, revokedNotice, setRevokedNotice }}
+      value={{ user, login, loginRoller, loginAccounts, loginCrm, loginInvestor, logout, loading, revokedNotice, setRevokedNotice }}
     >
       {children}
     </AuthContext.Provider>
